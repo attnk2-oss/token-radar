@@ -5,7 +5,8 @@
 // or the environment beyond the output path, so two runs on the same snapshot write the same bytes.
 //
 // What it writes, and why each file exists:
-//   /output/board.json     the ranked board the gate's four data rows read, one row per protocol
+//   /output/board.json     the ranked board the gate's four data rows read, one row per protocol, and
+//                          each row's decision at the page's first stake
 //   /output/data.js        the same numbers, compact, for the page: it sits outside dashboard/ so the
 //                          judge's 65,536-byte source window is spent on code, not on a data blob
 //   /output/dashboard/     index.html and the two files it loads, copied from this repository
@@ -107,15 +108,26 @@ for (const row of board) {
   byCategory.set(key, (byCategory.get(key) ?? 0) + 1);
 }
 const top = board[0]!;
+const winner = radar.ladder.find((row) => row.chosen)!;
+const flat = radar.ladder.find((row) => row.key === 'flat')!;
+const verdicts = new Map<string, number>();
+for (const row of board) verdicts.set(row.decision.verdict, (verdicts.get(row.decision.verdict) ?? 0) + 1);
+const verdictLine = ['Worth farming', 'Marginal', 'Skip']
+  .map((word) => `${verdicts.get(word) ?? 0} ${word.toLowerCase()}`)
+  .join(', ');
 process.stdout.write(
   `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ` +
     `${radar.meta.pre_token} pre-token, ${board.length} ranked across ${byCategory.size} categories\n` +
-    `token radar: model ${radar.meta.model_version}, curve log10(mult) = ${radar.curve.intercept.toFixed(3)} ` +
-    `${radar.curve.slope.toFixed(3)}*log10(tvl) on ${radar.curve.sample} launches, median ${radar.market.median_multiple.toFixed(3)}x\n` +
-    `token radar: out-of-sample miss ${radar.validation[0]!.curve_factor.toFixed(2)}x (flat ` +
-    `${radar.validation[0]!.flat_factor.toFixed(2)}x) on ${radar.validation[0]!.test} held-out launches\n` +
+    `token radar: model ${radar.meta.model_version} (${winner.label}), log10(mult) = ` +
+    `${radar.curve.intercept.toFixed(3)} ${radar.curve.slope.toFixed(3)}*log10(tvl) ` +
+    `${radar.curve.growth.toFixed(3)}*growth on ${radar.curve.sample} launches, residual ${radar.curve.residual_sd.toFixed(2)}\n` +
+    `token radar: ladder walk-forward ${radar.ladder.map((row) => `${row.key} ${row.walk_forward.toFixed(2)}x`).join(', ')}\n` +
+    `token radar: out-of-sample miss ${winner.walk_forward.toFixed(2)}x against ${flat.walk_forward.toFixed(2)}x for one multiple, ` +
+    `${Math.round(winner.within_3x * 100)}% within 3x, rank ${winner.rank_correlation.toFixed(2)}\n` +
     `token radar: rank 1 ${top.name} at $${(top.implied_value_usd / 1e6).toFixed(1)}M implied ` +
-    `(value if launched $${(top.model.value_if_launched_usd / 1e6).toFixed(0)}M x ${top.model.launch_odds} odds)\n` +
+    `(value if launched $${(top.model.value_if_launched_usd / 1e6).toFixed(0)}M x ${top.model.launch_odds} odds, ` +
+    `${top.decision.verdict.toLowerCase()} at $${top.decision.stake})\n` +
+    `token radar: decisions at $${top.decision.stake}: ${verdictLine}\n` +
     `token radar: wrote board.json, data.js, dashboard/ (${board.length} rows, ${byCategory.size} categories), ` +
     `screenshots/ (${shots.length}) and dossier.json\n`,
 );
