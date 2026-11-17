@@ -79,7 +79,11 @@
 
   var params = new URLSearchParams(location.search);
   var TIERS = D.assumptions.stake_tiers;
-  var tier = 0;
+  /* Open on the tier where the answer is not "almost nothing pays": the first impression of the
+     board should be the decision at a size most readers would actually deploy, and the switch is
+     right there for anyone who wants $1K. Falls back to the first tier if the ladder changes. */
+  var tier = TIERS.indexOf(10000);
+  if (tier < 0) tier = 0;
   var askedStake = Number(params.get('stake') || 0);
   for (var i = 0; i < TIERS.length; i += 1) if (TIERS[i] === askedStake) tier = i;
   var VERDICTS = ['Worth farming', 'Marginal', 'Skip'];
@@ -282,6 +286,7 @@
     var head = '<thead><tr>' +
       sortHead('rank', '#', 'l', '', 'c-rank') +
       sortHead('name', 'Protocol', 'l', '', 'c-name') +
+      sortHead('verdict', 'Verdict', 'n', 'At the stake the page is switched to: does the plan pay for the hours it takes', 'c-vd') +
       sortHead('implied', 'Implied', 'n', 'TVL × the fitted multiple × launch odds. The board ranks this.', 'c-val') +
       sortHead('band', 'P10–P90', 'n', 'The spread of the model\'s leave-one-out misses at this size', 'c-band') +
       sortHead('tvl', 'TVL', 'n', '', 'c-tvl') +
@@ -291,7 +296,6 @@
       sortHead('net', 'Net', 'n', 'The slice × the launch odds, less gas and the cost of capital', 'c-net') +
       sortHead('be', 'Break-even', 'n', 'How far above the model the launch must land, after the odds, for the bet to pay', 'c-be') +
       sortHead('ph', 'Net/hr', 'n', 'Net over the hours the plan takes', 'c-ph') +
-      sortHead('verdict', 'Verdict', 'n', '', 'c-vd') +
       '</tr></thead>';
     var body = rows.map(function (row) {
       var d = dec(row);
@@ -303,6 +307,7 @@
         '<td class="c-name nm">' + esc(row.name) +
           (row.watch ? ' <span class="w" title="On the house watchlist">W</span>' : '') +
           '<span class="sub">' + esc(row.cat) + ' · ' + esc(chainsText) + '</span></td>' +
+        '<td class="c-vd">' + verdictPill(d.verdict) + '</td>' +
         '<td class="c-val val">' + money(row.implied) + '</td>' +
         '<td class="c-band bandcell">' + bandCell(row) + '</td>' +
         '<td class="c-tvl num">' + money(row.tvl) + '</td>' +
@@ -312,7 +317,6 @@
         '<td class="c-net num ' + (d.net_usd > 0 ? 'pos' : d.net_usd < 0 ? 'neg' : 'flat') + '">' + cash(d.net_usd) + '</td>' +
         '<td class="c-be num ' + (d.break_even < 1 ? 'pos' : d.break_even > 2 ? 'neg' : 'flat') + '">' + times(d.break_even) + '</td>' +
         '<td class="c-ph num ' + (d.net_per_hour >= D.assumptions.labour_usd_per_hour ? 'pos' : d.net_per_hour < 0 ? 'neg' : 'flat') + '">' + cash(d.net_per_hour) + '</td>' +
-        '<td class="c-vd">' + verdictPill(d.verdict) + '</td>' +
         '</tr>';
     }).join('');
     return '<div class="tablewrap"><table class="board">' + head + '<tbody>' +
