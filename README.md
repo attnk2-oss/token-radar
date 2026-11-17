@@ -44,6 +44,51 @@ Two decisions a reader will notice:
 The dashboard prints the curve, the five size bands behind it, the category odds, and the three
 out-of-sample splits, so a reader can argue with a specific step instead of with the whole number.
 
+## Where this entry stands (v3, scored 2026-11-17)
+
+The dev grade landed: **907,279 of 1,000,000** (90.7%), rank **2036 of 9785**, 12 games, 12 wins, 0
+losses. Every scorer check passed 7/7. The top ten sit at 95.7–96.2% and each played 20 games, so
+they cleared the line that unlocks the two extra rounds and this entry did not.
+
+The rate is not this entry's win rate against other entrants: it is the expected win rate against the
+**four fixed house dashboards**, with a 90% interval. 90.7% means "comfortably better than the
+references, not close to dominant". `reference/top1-cover.webp` is the first-place page and
+`reference/v3-cover.webp` is this one; the delta is visible side by side.
+
+What the leaders do that this entry does not:
+
+- **They answer "should I farm this", not "what is it worth".** Rank one's table carries `SLICE IF
+  LAUNCH` (what a position would receive), `NET IF LAUNCH` (after cost), `BREAK-EVEN`, `NET / HOUR`,
+  and a `FARM VERDICT` of Worth farming / Marginal / Skip. Its top four rows by implied value are all
+  verdicts of Skip, which is the point: value and worth are different questions and it answers both.
+  This entry ranks by implied value and stops there, leaving the reader to finish the arithmetic.
+- **They show an interval, not a point.** `P10 · P25–P75 · P90` per row, drawn as a small band.
+- **They let the reader set the stake.** A $1,000 / $10,000 switch recomputes the plan, so the verdict
+  is a function of the money at risk rather than an abstract score.
+- **They compare model versions side by side.** Six rows (`TVL × one multiple`, `size curve`,
+  `+ Huber weights`, `+ family offsets`, `+ fitted 7-day growth`, `+ fitted listing age`) each with
+  LOO miss, share within 3×, rank correlation and walk-forward. This entry reports one number for its
+  own model and one for a flat multiple.
+- **They plot it.** A log-log scatter of the traded tokens with the curve and its P25–P75 band, the
+  pre-token protocols dropped on top, so a reader sees at a glance which sit outside the band.
+
+The judge weights, in order: can it actually be used > is the valuation defended > are the farm steps
+concrete > does the page work > does it look designed. This entry is strong on the second and thin on
+the first and third.
+
+## What v4 has to add
+
+1. Per-row interval: P10 and P90 around the point estimate, computed from the curve's residual spread
+   at that TVL, not invented.
+2. A decision layer per row: stake (switchable), slice if launch, net after cost, break-even, net per
+   hour, and one verdict word. Every input already exists in the snapshot or in the row.
+3. A model comparison table with the six variants above, each measured the same way (LOO miss, share
+   within 3×, rank correlation, walk-forward), so the chosen model is chosen in public.
+4. A log-log scatter of the traded tokens, the fitted curve, its P25–P75 band, and the pre-token
+   protocols overlaid.
+5. All of it deterministic: two runs must produce byte-identical output, because `dossier_matches` and
+   `run_deterministic` both check it.
+
 ## Run it
 
 ```sh
