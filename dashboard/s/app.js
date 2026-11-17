@@ -364,11 +364,24 @@
         topCategory(D.rows).share + '%</b> of the value</span>' : '') + '</div>';
   }
 
+  /** The active filters, in one line: a screenshot of a filtered board should say what it is showing. */
+  function filterSummary() {
+    var bits = [];
+    if (state.watch) bits.push('watchlist only');
+    if (state.cat !== 'all') bits.push(esc(state.cat));
+    if (state.chain !== 'all') bits.push(esc(state.chain));
+    if (state.min > 0) bits.push('TVL \u2265 $' + Math.round(state.min / 1e6) + 'M');
+    if (state.q.trim()) bits.push('\u201c' + esc(state.q.trim()) + '\u201d');
+    if (!bits.length) return '';
+    return 'filtered: ' + bits.join(' \u00b7 ') + ' \u00b7 ' + visibleRows().length + ' of ' + D.rows.length + ' rows';
+  }
+
   function renderBoard() {
     var rows = visibleRows();
     app.innerHTML = header() + stats(rows) +
       '<section class="main"><div class="panel">' +
-      '<div class="panel-hd"><h2>The board</h2><span class="hint">ranked by implied value; click a row for its argument</span></div>' +
+      '<div class="panel-hd"><h2>The board</h2><span class="hint">' +
+        (filterSummary() || 'ranked by implied value; click a row for its argument') + '</span></div>' +
       toolbar() + boardTable() + '</div>' +
       '<div class="rail">' + curveRail() + oddsRail() + '</div></section>' + method();
     var count = document.getElementById('count');
