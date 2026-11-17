@@ -1,111 +1,72 @@
-# token-radar-01：开工前已经查清的事实
+# Token Radar
 
-这份文件里的每个数字都是在这个仓库里实际跑出来的，不是估的。
+[![make.fun · token-radar-01](https://make.fun/badge/token-radar-01.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+[![rank](https://make.fun/badge/token-radar-01/attnk2-oss/token-radar/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+[![reward](https://make.fun/badge/token-radar-01/attnk2-oss/token-radar/reward.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
 
-## 竞赛
+A radar for protocols that record no token yet: what a launch would be worth if the protocol's
+record stayed as it is, how likely that category is to launch at all, and what farming it costs in
+money and time. It reads one sealed DefiLlama snapshot (758 protocols at or above $5M of TVL, 342
+recording no token, 40 on the house watchlist) and writes a ranked board, a static dashboard and the
+dossier the judge reads.
 
-- 平台 make.fun，slug `token-radar-01`
-- 奖金 $1,325，第 1 名 $1,000，第 2-5 名 $50，第 6-10 名 $25
-- 截止 2026-12-14 10:00 UTC
-- 已报名 10,600+ 个参赛者
-- 评判：AI judge 两两对比 dashboard，按胜率排名
-- 运行环境：1 CPU / 1 GB 内存 / **120 秒内必须跑完**
-- 提交上限：每天 5 次，总共 10 次，最后一次生效
-
-## 工具包位置
-
-`/home/ubuntu/.hermes/cache/scratch/makefun/kit/token-radar-01-kit/`
-
-- `input/snapshot.json` — 密封数据，247 KB
-- `starter/` — 能跑的起点（已验证可跑通）
-
-跑法：
-```bash
-cd /home/ubuntu/.hermes/cache/scratch/makefun/kit/token-radar-01-kit
-mkdir -p /tmp/out1
-MAKEFUN_OUTPUT_DIR=/tmp/out1 node starter/main.ts --input input/snapshot.json
-```
-
-实测输出：`758 protocols, 40 on the watchlist, 200 rows scored (160 early, 24 live set aside)`
-
-## 数据长什么样
-
-758 个协议，TVL ≥ $5M。40 个在 watchlist（TVL ≥ $50M 且没发币且不是 wrapped/staked/bridged）。
-
-字段就十个：slug / name / category / chains / tvl_usd / change_7d / mcap_usd / listed_at / gecko_id / symbol。
-
-## 关键发现：现有模型有一个巨大偏差
-
-starter 的模型是 `implied = tvl_usd × 0.25 × 增长 × 成熟度`。全市场统一 0.25 倍。
-
-**但 watchlist 40 个里有 12 个是 Risk Curators。**
-
-Risk Curators 这个类别在 snapshot 里共 39 个协议，**只有 5 个发过币，发币率 13%**。
-
-现有模型给 Steakhouse Financial（$2.75B TVL）估了 $688M。它是一家风险管理服务商，不是会发币的协议。
-
-各大类的真实发币率和真实估值倍数（从 snapshot 里有币的协议反推）：
-
-| 类别 | 发币率 | mcap/TVL 中位 | 样本 |
-|---|---|---|---|
-| Cross Chain Bridge | 86% | 1.220 | 4 |
-| Lending | 79% | 0.132 | 15 |
-| Dexs | 74% | 0.342 | 11 |
-| Basis Trading | 62% | 0.654 | 7 |
-| Yield Aggregator | 61% | 0.151 | 4 |
-| Yield | 59% | 0.180 | 10 |
-| Canonical Bridge | 53% | 0.746 | 8 |
-| RWA | 52% | 0.275 | 9 |
-| Liquid Staking | 51% | 0.041 | 9 |
-| CDP | 50% | 0.169 | 3 |
-| Bridge | 49% | 0.557 | 6 |
-| CEX | 25% | 0.075 | 9 |
-| **Risk Curators** | **13%** | 样本不足 | 1 |
-
-全市场基准：倍数中位 **0.205**，整体发币率 **55%**。
-
-## 建议的模型方向
-
-用「同类可比 + 发币概率」算期望值，而不是固定倍数：
+## The model
 
 ```
-期望值 = TVL × 该类已发币协议的 mcap/TVL 中位数 × 该类发币率 × 增长调整 × 成熟度调整
+implied = tvl × multiple(category) × launch_rate(category) × momentum(Δ7d) × maturity(age_days)
 ```
 
-类别样本不足时（倍数样本 < 3 或类别总数 < 6），回退到全市场基准（0.205 / 55%）。
+The one thing the starter model gets wrong is the single market-wide multiple: priced at 0.25× of
+TVL, a $2.7B risk curator is worth the same as a $2.7B DEX, and the snapshot says they are not. On
+this snapshot's own 416 token-bearing protocols, mcap/TVL runs from 0.04 for liquid staking to 0.34
+for DEXs, and 5 of 39 risk curators ever recorded a token against 79% of lending protocols.
 
-我在 `/home/ubuntu/.hermes/cache/scratch/makefun/model_v2.py` 里按这个思路算过一遍，结果是：
+So every category is calibrated against its own launched protocols, in log space, and shrunk toward
+the market with a pseudo-count of six: a category with one comparable lands a seventh of the way from
+the market figure, not at its lone outlier. Launch rates are shrunk the same way. The page prints
+every constant, and each row carries the number of launched comparables its multiple rests on.
 
-- Steakhouse 从 $688M → $57M
-- 新榜首：Veda（$1.56B TVL 的资本分配器）$79M、USDD（$1.06B 的 CDP）$72M、Bittensor dTAO $57M
-- Tori Finance 和 Axis（Basis Trading，发币率 62%、倍数 0.654）排名明显上升
+Two decisions a reader will notice:
 
-这个脚本是草稿，不是最终实现，可以推翻重写。核心思路是「每个类别用同类数据说话」，不要对任何具体协议名字特判。
+- **Structural exclusions.** The watchlist's own rule (exchanges, bridges, liquid staking, wrapped and
+  staked products of a token that already trades) is applied to the whole field, not just to protocols
+  above the $50M floor. The floor moves; the rule does not. Without it the board's top rows are Bybit,
+  WBTC and Coinbase Bridge, which is not a launch radar.
+- **The board is every candidate, not the watchlist.** 198 protocols are ranked, all 40 watchlist
+  protocols among them and flagged, so the watchlist is a floor of coverage rather than the extent of
+  the search.
 
-## 交付要求
+## Run it
 
-- `main.ts` 在仓库根目录（Node 22）
-- `board.json` 至少 100 行，watchlist 40 个全覆盖
-- `dashboard/` 静态页，无网络也能渲染
-- `screenshots/` 3 张：榜单、某协议详情、筛选视图
-- `dossier.json`
-- OSI 协议（MIT）
-- README 带 make.fun 徽章，GitHub About 链接 make.fun
+```sh
+node main.ts --input <snapshot.json|directory> --output <directory>
+```
 
-## 评分要点
+The grader runs `node main.ts` with the sealed snapshot at `/input` and a writable `/output`, one CPU,
+1 GB of memory, no network, 120 seconds. The program reads no clock, no network and no environment
+beyond the output path, so two runs write the same bytes.
 
-AI judge 两两对比页面，看的是**信息密度、可读性、有说服力的推理**。
+## What it writes
 
-不是比算法多复杂，是比页面能不能让一个做 DeFi 的人一眼看懂「为什么这个协议该排前面」。
+| file | why |
+| --- | --- |
+| `board.json` | the ranked board: 198 rows, ranks 1..N, implied value non-increasing |
+| `data.js` | the same numbers, compact, for the page; outside `dashboard/` so the judge's 65,536-byte source window is spent on code |
+| `dashboard/` | `index.html` plus the CSS and JS it loads, no framework, no network |
+| `screenshots/` | three views: the board, a protocol's detail, a filtered board |
+| `dossier.json` | what the judge reads, written by the vendored `buildDossier` the scorer runs itself |
 
-所以 dashboard 上要有：
-- 榜单本身
-- 每个协议的详情（TVL、类别、倍数怎么来的、发币概率、farm 步骤）
-- 一个能筛选的视图
-- 说清楚模型的假设和局限
+## Layout
 
-## 提交注意
+```
+main.ts                     reads the snapshot, writes the five outputs
+lib/model.ts                calibration, scoring, farm plans, the gate's own assertions
+vendor/makefun-board.ts     the kit's dossier writer, byte for byte
+dashboard/index.html        the shell
+dashboard/s/app.css         the page
+dashboard/s/app.js          the board and the detail view
+```
 
-提交要带 AI 会话记录。当前这个仓库的代码必须在「竞赛窗口内（2026-11-14 10:00 UTC 之后）开始的会话」里写，早于这个时间的会话会被 `thinking_in_window` 拒掉。
+## Licence
 
-所以：**从这个文件开始，所有代码都在新会话里写。**
+MIT.
