@@ -225,7 +225,7 @@ select:focus { border-color: var(--mint-2); }
 
 /* ---------- board table ---------- */
 
-.tablewrap { max-height: 528px; overflow-y: auto; }
+.tablewrap { max-height: 508px; overflow-y: auto; }
 
 table { width: 100%; border-collapse: collapse; }
 

@@ -110,10 +110,12 @@ const top = board[0]!;
 process.stdout.write(
   `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ` +
     `${radar.meta.pre_token} pre-token, ${board.length} ranked across ${byCategory.size} categories\n` +
-    `token radar: model ${radar.meta.model_version}, market multiple ${radar.market.multiple.toFixed(3)} on ` +
-    `${radar.market.sample} launched protocols, launch rate ${(radar.market.launch_rate * 100).toFixed(1)}%\n` +
+    `token radar: model ${radar.meta.model_version}, curve log10(mult) = ${radar.curve.intercept.toFixed(3)} ` +
+    `${radar.curve.slope.toFixed(3)}*log10(tvl) on ${radar.curve.sample} launches, median ${radar.market.median_multiple.toFixed(3)}x\n` +
+    `token radar: out-of-sample miss ${radar.validation[0]!.curve_factor.toFixed(2)}x (flat ` +
+    `${radar.validation[0]!.flat_factor.toFixed(2)}x) on ${radar.validation[0]!.test} held-out launches\n` +
     `token radar: rank 1 ${top.name} at $${(top.implied_value_usd / 1e6).toFixed(1)}M implied ` +
-    `(value if launched $${(top.model.value_if_launched_usd / 1e6).toFixed(0)}M x ${top.model.launch_rate})\n` +
+    `(value if launched $${(top.model.value_if_launched_usd / 1e6).toFixed(0)}M x ${top.model.launch_odds} odds)\n` +
     `token radar: wrote board.json, data.js, dashboard/ (${board.length} rows, ${byCategory.size} categories), ` +
     `screenshots/ (${shots.length}) and dossier.json\n`,
 );

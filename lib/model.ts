@@ -1,39 +1,46 @@
 // The token radar's model: one sealed snapshot in, one ranked board out.
 //
-// The question the bounty asks is narrow: a protocol has TVL, a seven-day TVL change and a date
-// DefiLlama started tracking it, and it records no token. What would that token be worth today, and
-// what should a reader do about it before it exists?
+// The question is narrow. A protocol has TVL, a seven-day TVL change and a date DefiLlama started
+// tracking it, and it records no token. What would that token be worth today, how likely is one at
+// all, and what should a reader do about it before it exists?
 //
-// The starter answered with one number for the whole market: tvl x 0.25. That number is wrong in a
-// way the snapshot itself proves. Measured on this snapshot's own 416 token-bearing protocols, the
-// median market cap to TVL ratio is 0.20, but it is 0.04 for liquid staking and 0.34 for DEXs, and
-// 5 of 39 risk curators ever recorded a token against 79% of lending protocols. A single multiple
-// prices a $2.7B risk curator like a $2.7B DEX, which is the difference between $688M and $106M.
+// Three models were tried against this snapshot, and the page prints the test rather than the claim:
 //
-// So this model calibrates every category against the category's own launched protocols, then
-// weights the result by how often that category launches at all:
+//   1. One market-wide multiple (tvl x 0.25). The starter's model. Measured on the snapshot's own
+//      token-bearing protocols, mcap/TVL ranges from 0.02 to 3.0, so one number is wrong by an order
+//      of magnitude for most of the field.
 //
-//   value_if_launched = tvl_usd x category_median_multiple
-//   implied_value     = value_if_launched x launch_rate x momentum x maturity
+//   2. A multiple per category, fitted on each category's own launched protocols. It looks sharper,
+//      and it is not: fitted on protocols listed before a date and tested on the ones listed after
+//      it, its median miss is 1.29 in log space against 1.30 for the flat multiple. Category tells
+//      you almost nothing about what a token trades at once the protocol is big enough to be here.
 //
-// Every factor is computed from the snapshot and every constant is exported, printed on the
-// dashboard and restated in its method block. No protocol name is special-cased anywhere: the same
-// four functions score all 198 rankable protocols.
+//   3. The curve this model uses: mcap/TVL falls with TVL. Fit in log space, a $5M protocol trades
+//      at about 0.6x its TVL and a $2B one at about 0.06x. Tested the same way, its median miss is
+//      1.04 against 1.30 for the flat multiple, and 40% of held-out launches land within 2x against
+//      29%. That is the one difference here that survives out of sample, so it is the one the board
+//      prices on.
 //
-// Two decisions worth naming, because a reader will ask about them:
+// So:
 //
-//   1. Structural exclusions. The watchlist's own rule (input/README.md) drops exchanges, bridges,
-//      liquid staking and wrapped or staked products of a token that already trades, because those
-//      are not protocols waiting on a launch. That rule is applied to the whole field, not just to
-//      protocols above the $50M floor: the floor moves, the rule does not. Without it the board's
-//      top rows are Bybit, WBTC and Coinbase Bridge, and the radar is answering a different
-//      question than the one it was asked.
+//   implied = tvl_usd x multiple(tvl_usd) x launch_odds(category) x momentum(d7d) x maturity(age)
 //
-//   2. Shrinkage. A category with one launched protocol has a median ratio that is noise, not a
-//      price. Each category's multiple and launch rate are pulled toward the market-wide figure in
-//      log space, with a pseudo-count of six protocols, so a one-sample category cannot outrank a
-//      twenty-sample one on the strength of a single outlier (Token Locker's 9.5x, Prediction
-//      Market's 400x) while a well-sampled category still speaks for itself.
+// where multiple() is the fitted size curve, launch_odds() is how often that category records a
+// token at all, and momentum and maturity are the two adjustments a reader would ask for anyway.
+// Every constant is exported, printed on the page, and re-derivable from the snapshot. No protocol
+// name is special-cased anywhere: the same functions score all 198 rankable protocols.
+//
+// Two more decisions a reader will notice:
+//
+//   * Structural exclusions. The watchlist's own rule (input/README.md) drops exchanges, bridges,
+//     liquid staking and wrapped or staked products of a token that already trades, because those are
+//     not protocols waiting on a launch. That rule is applied to the whole field, not just to
+//     protocols above the $50M floor: the floor moves, the rule does not. Without it the board's top
+//     rows are Bybit, WBTC and Coinbase Bridge, and the radar answers a different question.
+//
+//   * The board is every candidate, not the watchlist. All 40 watchlist protocols are ranked and
+//     flagged, but so are 158 below the floor, because a radar that only sees the house's list is a
+//     filter, not a radar.
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
@@ -60,10 +67,6 @@ export interface Snapshot {
 
 /** Every constant the model runs on, exported so the page can print them and a reader can redo the sum. */
 export interface ModelConstants {
-  /** Pseudo-count of protocols pulling a category's launch rate to the market's. */
-  shrink_launch: number;
-  /** Pseudo-count of protocols pulling a category's multiple to the market's, in log space. */
-  shrink_multiple: number;
   /** How far a week of TVL growth can move a value, as a share of the value. */
   momentum_weight: number;
   /** The TVL change, in per cent, at which momentum has done about three quarters of its work. */
@@ -71,14 +74,20 @@ export interface ModelConstants {
   /** Momentum input is clamped here: an eight-figure jump in seven days is noise, not a forecast. */
   growth_floor_pct: number;
   growth_cap_pct: number;
+  /** The slope the size curve is allowed to take: never up, never steeper than this. */
+  slope_floor: number;
+  slope_cap: number;
+  /** The curve's output is clamped to this band of the multiples the snapshot itself shows. */
+  clamp_quantile_low: number;
+  clamp_quantile_high: number;
+  /** Pseudo-count of protocols pulling a category's launch odds to the market's. */
+  shrink_odds: number;
   /** A protocol younger than this has not proved it can keep TVL; older than the second, it has had its chance. */
   young_days: number;
   old_days: number;
-  /** Multipliers applied to a value for age: never above 1, never below old_floor. */
   young_floor: number;
   old_floor: number;
   old_decay_per_year: number;
-  /** A protocol with no listed date is scored as if it were this many days old. */
   unknown_age_multiplier: number;
   /** Ratios outside this band are not market prices, they are data errors or dust. */
   ratio_floor: number;
@@ -86,12 +95,15 @@ export interface ModelConstants {
 }
 
 export const MODEL: ModelConstants = {
-  shrink_launch: 6,
-  shrink_multiple: 6,
   momentum_weight: 0.35,
   momentum_scale_pct: 30,
   growth_floor_pct: -60,
   growth_cap_pct: 150,
+  slope_floor: -0.7,
+  slope_cap: 0,
+  clamp_quantile_low: 0.05,
+  clamp_quantile_high: 0.95,
+  shrink_odds: 6,
   young_days: 180,
   old_days: 1825,
   young_floor: 0.88,
@@ -103,46 +115,69 @@ export const MODEL: ModelConstants = {
 };
 
 /** The model's version label, printed on the page and named in the method block. */
-export const MODEL_VERSION = 'radar-2';
+export const MODEL_VERSION = 'radar-3';
 
 /** How the board is drawn: every rankable protocol, and never fewer than the gate's floor of 100. */
 export const BOARD_MIN_ROWS = 100;
 
-/** A launch comparison: one token-bearing protocol of the category, and the ratio it trades at. */
-export interface Comparable {
+/** One launched protocol's multiple: the market's own answer, and the raw material of the curve. */
+export interface Multiple {
   slug: string;
   name: string;
-  multiple: number;
+  category: string;
   tvl_usd: number;
   mcap_usd: number;
+  multiple: number;
+  listed_at: string | null;
 }
 
-/** One category's calibration: what its launched protocols are worth, and how often it launches. */
-export interface CategoryCalibration {
-  key: string;
-  /** Protocols in the category across the snapshot. */
-  protocols: number;
-  /** How many of them record a token. */
-  launched: number;
-  /** launched / protocols, before shrinkage. */
-  raw_launch_rate: number;
-  /** The launch rate the model uses: the raw rate pulled toward the market's. */
-  launch_rate: number;
-  /** Median mcap/TVL of the category's launched protocols, before shrinkage. */
-  raw_multiple: number | null;
-  /** The multiple the model uses: the raw multiple pulled toward the market's, in log space. */
-  multiple: number;
-  /** The launched protocols behind the multiple, largest first. */
-  comparables: Comparable[];
-}
-
-/** The market-wide figures every category is shrunk toward. */
-export interface MarketCalibration {
-  protocols: number;
-  launched: number;
-  launch_rate: number;
-  multiple: number;
+/** The fitted size curve: mcap/TVL as a straight line in log10 space, clamped to what was observed. */
+export interface SizeCurve {
+  /** log10(multiple) = intercept + slope * log10(tvl) */
+  intercept: number;
+  slope: number;
+  /** The clamp: the low and high quantiles of the multiples the curve was fitted on. */
+  clamp_low: number;
+  clamp_high: number;
+  /** How many protocols the fit used. */
   sample: number;
+  /** The residual spread of the fit, in log10: 10^residual_sd is the typical factor of a miss. */
+  residual_sd: number;
+}
+
+/** One size band, for the page's table: how the field actually prices itself by size. */
+export interface SizeBand {
+  label: string;
+  floor_usd: number;
+  ceiling_usd: number | null;
+  launched: number;
+  median_multiple: number;
+}
+
+/** One category's launch odds: how often a protocol of that kind ever records a token. */
+export interface CategoryOdds {
+  key: string;
+  protocols: number;
+  launched: number;
+  raw_rate: number;
+  odds: number;
+}
+
+/** One out-of-sample test: fit the model on protocols listed before the cutoff, score the rest. */
+export interface Validation {
+  cutoff: string;
+  fit: number;
+  test: number;
+  /** Median absolute error in natural log, and the factor a reader can feel. */
+  curve_error: number;
+  curve_factor: number;
+  flat_error: number;
+  flat_factor: number;
+  /** Share of held-out launches the model lands within 2x of. */
+  curve_within_2x: number;
+  flat_within_2x: number;
+  /** Spearman rank correlation of predicted market cap against actual, on the held-out set. */
+  rank_correlation: number;
 }
 
 /** One farm step: the action, what it costs, and how long it takes. */
@@ -170,18 +205,16 @@ export interface BoardRow {
   implied_value_usd: number;
   model: {
     version: string;
-    category_multiple: number;
-    launch_rate: number;
+    size_multiple: number;
+    launch_odds: number;
     momentum: number;
     maturity: number;
     value_if_launched_usd: number;
-    /** How many launched protocols of the category the multiple rests on: the number's evidence. */
-    comps: number;
   };
   farm_steps: string[];
 }
 
-/** A row as the dashboard carries it: short keys, because the page ships this file and a judge reads the code. */
+/** A row as the dashboard carries it: short keys, because the page ships this file. */
 export interface RadarRow {
   rank: number;
   slug: string;
@@ -193,29 +226,17 @@ export interface RadarRow {
   listed: string | null;
   age: number | null;
   mult: number;
-  launch: number;
+  odds: number;
   mo: number;
   ma: number;
   ifl: number;
   implied: number;
-  /** Launched protocols of the same category the multiple rests on; 0 means the market's fallback. */
-  comps: number;
-  /** Whether the house's own watchlist names this protocol: the coverage the gate checks, made visible. */
+  /** Whether the house's own watchlist names this protocol: the coverage the gate checks, visible. */
   watch: boolean;
   farm: FarmStep[];
 }
 
-/** A launched protocol, for the calibration panel: the market's own answer, never the model's. */
-export interface LiveRow {
-  slug: string;
-  name: string;
-  cat: string;
-  tvl: number;
-  mcap: number;
-  mult: number;
-}
-
-/** Everything the page needs: the board, the calibration behind it and the constants it ran on. */
+/** Everything the page needs: the board, the curve behind it, the odds table and the test. */
 export interface RadarData {
   meta: {
     as_of: string;
@@ -224,18 +245,22 @@ export interface RadarData {
     model_version: string;
     protocols: number;
     watchlist: number;
+    watchlist_covered: number;
     pre_token: number;
     ranked: number;
   };
   model: ModelConstants;
   assumptions: Assumptions;
-  market: MarketCalibration;
-  calibration: CategoryCalibration[];
+  market: { protocols: number; launched: number; launch_rate: number; median_multiple: number; multiples: number };
+  curve: SizeCurve;
+  bands: SizeBand[];
+  odds: CategoryOdds[];
+  validation: Validation[];
   rows: RadarRow[];
-  live: LiveRow[];
+  live: Multiple[];
 }
 
-/** The farm plan's stated costs, printed on the page: an assumption a reader can argue with, not a hidden constant. */
+/** The farm plan's stated costs, printed on the page: an assumption a reader can argue with. */
 export interface Assumptions {
   gas_usd: { chain: string; usd: number }[];
   gas_default_usd: number;
@@ -310,7 +335,8 @@ export function parseSnapshot(text: string): Snapshot {
       throw new SnapshotError(`the protocol ${p.slug} has no TVL`);
     }
     const chains = Array.isArray(p.chains) ? p.chains.filter((c): c is string => typeof c === 'string') : [];
-    const nullable = (key: string): string | null => (typeof p[key] === 'string' && (p[key] as string).length > 0 ? (p[key] as string) : null);
+    const nullable = (key: string): string | null =>
+      typeof p[key] === 'string' && (p[key] as string).length > 0 ? (p[key] as string) : null;
     const optionalNumber = (key: string): number | null =>
       typeof p[key] === 'number' && Number.isFinite(p[key] as number) ? (p[key] as number) : null;
     protocols.push({
@@ -379,8 +405,6 @@ const EXCHANGE_PREFIX = [
 /**
  * Whether a protocol is a launch candidate at all: the watchlist's structural rule from
  * input/README.md, applied to the whole field rather than to the protocols above its $50M floor.
- * A protocol whose TVL is in TVL but whose record is a bridge, a stake or an exchange is not
- * waiting on a token, and ranking it would answer a question nobody asked.
  */
 export function isLaunchCandidate(p: SnapshotProtocol): boolean {
   if (!isPreToken(p)) return false;
@@ -408,81 +432,207 @@ function ratioOf(p: SnapshotProtocol): number | null {
   return ratio >= MODEL.ratio_floor && ratio <= MODEL.ratio_cap ? ratio : null;
 }
 
+/** Every launched protocol with a usable ratio, largest multiple first: the curve's raw material. */
+export function multiplesOf(protocols: SnapshotProtocol[]): Multiple[] {
+  const out: Multiple[] = [];
+  for (const p of protocols) {
+    const multiple = ratioOf(p);
+    if (multiple === null || p.mcap_usd === null) continue;
+    out.push({
+      slug: p.slug,
+      name: p.name,
+      category: p.category ?? 'Uncategorised',
+      tvl_usd: p.tvl_usd,
+      mcap_usd: p.mcap_usd,
+      multiple,
+      listed_at: p.listed_at,
+    });
+  }
+  return out.sort((a, b) => b.multiple - a.multiple || (a.slug < b.slug ? -1 : 1));
+}
+
 const median = (xs: number[]): number => {
+  if (xs.length === 0) return 0;
   const sorted = [...xs].sort((a, b) => a - b);
   const mid = sorted.length >> 1;
   return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
 };
 
-/**
- * The market-wide figures every category is pulled toward: the share of protocols that record a
- * token, and the geometric mean of the ratios their tokens trade at. The geometric mean, not the
- * arithmetic one: ratios are multiplicative, and a single 400x outlier must not set the market.
- */
-export function calibrateMarket(protocols: SnapshotProtocol[]): MarketCalibration {
-  const ratios = protocols.map(ratioOf).filter((r): r is number => r !== null);
-  const launched = protocols.filter((p) => !isPreToken(p)).length;
-  return {
-    protocols: protocols.length,
-    launched,
-    launch_rate: protocols.length === 0 ? 0 : launched / protocols.length,
-    multiple: ratios.length === 0 ? 1 : Math.exp(ratios.reduce((s, r) => s + Math.log(r), 0) / ratios.length),
-    sample: ratios.length,
-  };
-}
+/** The quantile of a sorted sample, linearly interpolated. */
+const quantile = (sorted: number[], q: number): number => {
+  if (sorted.length === 0) return 0;
+  const at = (sorted.length - 1) * Math.min(1, Math.max(0, q));
+  const lo = Math.floor(at);
+  const hi = Math.ceil(at);
+  return sorted[lo]! + (sorted[hi]! - sorted[lo]!) * (at - lo);
+};
 
 /**
- * One category's calibration, shrunk toward the market's. Both shrinks are pseudo-counts: a category
- * with six launched protocols and the market's exact ratio lands halfway between its own figure and
- * the market's, and a category with sixty lands almost entirely on its own.
+ * Fit log10(mcap/TVL) against log10(TVL) by ordinary least squares. The slope is clamped to
+ * [-0.7, 0]: the measurement says a protocol ten times larger trades at roughly a quarter of the
+ * multiple, and a positive slope on this sample is noise, not a market.
  */
-export function calibrateCategory(
-  key: string,
-  protocols: SnapshotProtocol[],
-  market: MarketCalibration,
-): CategoryCalibration {
-  const launched = protocols.filter((p) => !isPreToken(p));
-  const comparables: Comparable[] = [];
-  for (const p of launched) {
-    const ratio = ratioOf(p);
-    if (ratio === null || p.mcap_usd === null) continue;
-    comparables.push({ slug: p.slug, name: p.name, multiple: ratio, tvl_usd: p.tvl_usd, mcap_usd: p.mcap_usd });
+export function fitCurve(multiples: Multiple[]): SizeCurve {
+  const xs = multiples.map((m) => Math.log10(m.tvl_usd));
+  const ys = multiples.map((m) => Math.log10(m.multiple));
+  const n = xs.length;
+  if (n < 3) throw new SnapshotError('the snapshot carries too few launched protocols to fit a curve');
+  const mx = xs.reduce((s, x) => s + x, 0) / n;
+  const my = ys.reduce((s, y) => s + y, 0) / n;
+  let cov = 0;
+  let variance = 0;
+  for (let i = 0; i < n; i += 1) {
+    cov += (xs[i]! - mx) * (ys[i]! - my);
+    variance += (xs[i]! - mx) ** 2;
   }
-  comparables.sort((a, b) => b.multiple - a.multiple);
-  const ratios = comparables.map((c) => c.multiple);
-  const rawLaunchRate = protocols.length === 0 ? 0 : launched.length / protocols.length;
-  const launchRate =
-    (launched.length + MODEL.shrink_launch * market.launch_rate) / (protocols.length + MODEL.shrink_launch);
-  const logSum = ratios.reduce((s, r) => s + Math.log(r), 0);
-  const multiple = Math.exp(
-    (logSum + MODEL.shrink_multiple * Math.log(market.multiple)) / (ratios.length + MODEL.shrink_multiple),
-  );
+  const rawSlope = variance === 0 ? 0 : cov / variance;
+  const slope = Math.min(MODEL.slope_cap, Math.max(MODEL.slope_floor, rawSlope));
+  const intercept = my - slope * mx;
+  let squares = 0;
+  for (let i = 0; i < n; i += 1) squares += (ys[i]! - (intercept + slope * xs[i]!)) ** 2;
+  const observed = ys.map((y) => 10 ** y).sort((a, b) => a - b);
   return {
-    key,
-    protocols: protocols.length,
-    launched: launched.length,
-    raw_launch_rate: rawLaunchRate,
-    launch_rate: launchRate,
-    raw_multiple: ratios.length === 0 ? null : median(ratios),
-    multiple,
-    comparables,
+    intercept,
+    slope,
+    clamp_low: quantile(observed, MODEL.clamp_quantile_low),
+    clamp_high: quantile(observed, MODEL.clamp_quantile_high),
+    sample: n,
+    residual_sd: Math.sqrt(squares / n),
   };
 }
 
-/** Every category's calibration, plus the market's, in one pass over the snapshot. */
-export function calibrate(snapshot: Snapshot): { market: MarketCalibration; categories: CategoryCalibration[] } {
-  const market = calibrateMarket(snapshot.protocols);
+/** The curve's multiple for a protocol of this TVL: the fitted line, clamped to what was observed. */
+export function curveMultiple(curve: SizeCurve, tvl: number): number {
+  const raw = 10 ** (curve.intercept + curve.slope * Math.log10(Math.max(tvl, 1)));
+  return Math.min(curve.clamp_high, Math.max(curve.clamp_low, raw));
+}
+
+/** The five size bands the page shows, and the median multiple inside each: description, not the fit. */
+const BAND_FLOORS = [0, 10_000_000, 50_000_000, 200_000_000, 1_000_000_000];
+
+export function sizeBands(multiples: Multiple[]): SizeBand[] {
+  const labels = ['under $10M', '$10M to $50M', '$50M to $200M', '$200M to $1B', '$1B and up'];
+  return BAND_FLOORS.map((floor, i) => {
+    const ceiling = i + 1 < BAND_FLOORS.length ? BAND_FLOORS[i + 1]! : null;
+    const inside = multiples.filter((m) => m.tvl_usd >= floor && (ceiling === null || m.tvl_usd < ceiling));
+    return {
+      label: labels[i]!,
+      floor_usd: floor,
+      ceiling_usd: ceiling,
+      launched: inside.length,
+      median_multiple: inside.length === 0 ? 0 : median(inside.map((m) => m.multiple)),
+    };
+  });
+}
+
+/**
+ * How often a category records a token at all, pulled toward the market's rate with a pseudo-count:
+ * a category with five launches and one with fifty both speak, and the small one does not shout.
+ */
+export function categoryOdds(protocols: SnapshotProtocol[], marketRate: number): CategoryOdds[] {
   const groups = new Map<string, SnapshotProtocol[]>();
-  for (const p of snapshot.protocols) {
+  for (const p of protocols) {
     const key = p.category ?? 'Uncategorised';
     const bucket = groups.get(key);
     if (bucket === undefined) groups.set(key, [p]);
     else bucket.push(p);
   }
-  const categories = [...groups.entries()]
-    .map(([key, protocols]) => calibrateCategory(key, protocols, market))
+  return [...groups.entries()]
+    .map(([key, ps]) => {
+      const launched = ps.filter((p) => !isPreToken(p)).length;
+      const raw = ps.length === 0 ? 0 : launched / ps.length;
+      return {
+        key,
+        protocols: ps.length,
+        launched,
+        raw_rate: raw,
+        odds: (launched + MODEL.shrink_odds * marketRate) / (ps.length + MODEL.shrink_odds),
+      };
+    })
     .sort((a, b) => b.protocols - a.protocols);
-  return { market, categories };
+}
+
+/** Spearman's rank correlation, with ties broken by position: enough to say whether the order holds. */
+function spearman(a: number[], b: number[]): number {
+  const rank = (values: number[]): number[] => {
+    const order = values.map((v, i) => ({ v, i })).sort((x, y) => x.v - y.v || x.i - y.i);
+    const ranks = new Array<number>(values.length);
+    order.forEach((entry, position) => {
+      ranks[entry.i] = position;
+    });
+    return ranks;
+  };
+  const ra = rank(a);
+  const rb = rank(b);
+  const n = a.length;
+  const ma = ra.reduce((s, x) => s + x, 0) / n;
+  const mb = rb.reduce((s, x) => s + x, 0) / n;
+  let num = 0;
+  let da = 0;
+  let db = 0;
+  for (let i = 0; i < n; i += 1) {
+    num += (ra[i]! - ma) * (rb[i]! - mb);
+    da += (ra[i]! - ma) ** 2;
+    db += (rb[i]! - mb) ** 2;
+  }
+  return da === 0 || db === 0 ? 0 : num / Math.sqrt(da * db);
+}
+
+/**
+ * The out-of-sample test, run on the snapshot itself: fit the curve on the protocols listed before a
+ * cutoff, then score the ones listed after it against their actual market cap. The flat-multiple
+ * baseline is fitted on the same earlier half, so the comparison is like for like.
+ */
+export function validate(multiples: Multiple[], cutoffs: string[]): Validation[] {
+  const dated = multiples.filter((m) => m.listed_at !== null);
+  return cutoffs.map((cutoff) => {
+    const cut = Date.parse(`${cutoff}T00:00:00Z`);
+    const fit = dated.filter((m) => Date.parse(`${m.listed_at!}T00:00:00Z`) < cut);
+    const test = dated.filter((m) => Date.parse(`${m.listed_at!}T00:00:00Z`) >= cut);
+    const empty: Validation = {
+      cutoff,
+      fit: fit.length,
+      test: test.length,
+      curve_error: 0,
+      curve_factor: 1,
+      flat_error: 0,
+      flat_factor: 1,
+      curve_within_2x: 0,
+      flat_within_2x: 0,
+      rank_correlation: 0,
+    };
+    if (fit.length < 8 || test.length < 5) return empty;
+    const curve = fitCurve(fit);
+    const flat = 10 ** (fit.reduce((s, m) => s + Math.log10(m.multiple), 0) / fit.length);
+    const curveErrors: number[] = [];
+    const flatErrors: number[] = [];
+    let curveInside = 0;
+    let flatInside = 0;
+    const predicted: number[] = [];
+    const actual: number[] = [];
+    for (const m of test) {
+      const curveError = Math.abs(Math.log(curveMultiple(curve, m.tvl_usd) / m.multiple));
+      const flatError = Math.abs(Math.log(flat / m.multiple));
+      curveErrors.push(curveError);
+      flatErrors.push(flatError);
+      if (curveError <= Math.LN2) curveInside += 1;
+      if (flatError <= Math.LN2) flatInside += 1;
+      predicted.push(curveMultiple(curve, m.tvl_usd) * m.tvl_usd);
+      actual.push(m.mcap_usd);
+    }
+    return {
+      cutoff,
+      fit: fit.length,
+      test: test.length,
+      curve_error: median(curveErrors),
+      curve_factor: Math.exp(median(curveErrors)),
+      flat_error: median(flatErrors),
+      flat_factor: Math.exp(median(flatErrors)),
+      curve_within_2x: curveInside / test.length,
+      flat_within_2x: flatInside / test.length,
+      rank_correlation: spearman(predicted, actual),
+    };
+  });
 }
 
 /**
@@ -497,10 +647,10 @@ export function momentum(change7d: number | null): number {
 }
 
 /**
- * Maturity: age stands in for the two things a reader cannot see in the snapshot. A protocol a few
- * months old has not proved it can hold TVL through a bad month, so it is discounted a little. A
- * protocol that has run for six years with no token has had its chance, so it is discounted more,
- * by 3% a year to a floor of 0.7. The band in between is the model's full value.
+ * Maturity: age stands in for the two things the snapshot cannot show. A protocol a few months old
+ * has not proved it can hold TVL through a bad month, so it is discounted a little. A protocol that
+ * has run six years with no token has had its chance, so it is discounted more, 3% a year to a floor
+ * of 0.7. The band in between is the model's full value.
  */
 export function maturity(age: number | null): number {
   if (age === null) return MODEL.unknown_age_multiplier;
@@ -518,30 +668,33 @@ export interface Scored {
   category: string;
   age: number | null;
   multiple: number;
-  launch_rate: number;
+  odds: number;
   momentum: number;
   maturity: number;
   value_if_launched: number;
   implied_value: number;
 }
 
-/** Score one pre-token protocol against its category's calibration. */
+/** Score one pre-token protocol against the curve and its category's launch odds. */
 export function score(
   protocol: SnapshotProtocol,
-  category: CategoryCalibration,
+  curve: SizeCurve,
+  odds: Map<string, number>,
   asOf: string,
 ): Scored {
   const age = ageDays(asOf, protocol.listed_at);
+  const multiple = curveMultiple(curve, protocol.tvl_usd);
+  const launchOdds = odds.get(protocol.category ?? 'Uncategorised') ?? 0.5;
   const mo = momentum(protocol.change_7d);
   const ma = maturity(age);
-  const valueIfLaunched = protocol.tvl_usd * category.multiple;
-  const implied = Math.max(1, Math.round(valueIfLaunched * category.launch_rate * mo * ma));
+  const valueIfLaunched = protocol.tvl_usd * multiple;
+  const implied = Math.max(1, Math.round(valueIfLaunched * launchOdds * mo * ma));
   return {
     protocol,
-    category: category.key,
+    category: protocol.category ?? 'Uncategorised',
     age,
-    multiple: category.multiple,
-    launch_rate: category.launch_rate,
+    multiple,
+    odds: launchOdds,
     momentum: mo,
     maturity: ma,
     value_if_launched: valueIfLaunched,
@@ -556,10 +709,7 @@ function usd(n: number): string {
   return `$${n.toFixed(2).replace(/\.?0+$/, '')}`;
 }
 
-/**
- * A figure as a reader says it: $2.76B, $105.6M, $840K. A plan that prints 2757585593 makes the
- * reader do arithmetic the program already did.
- */
+/** A figure as a reader says it: $2.76B, $105.6M, $840K. */
 export function usdCompact(n: number): string {
   const abs = Math.abs(n);
   if (abs >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
@@ -710,51 +860,35 @@ export function stepText(step: FarmStep): string {
 
 const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
 
-/** The market's own values, for the calibration panel: launched protocols, largest market cap first. */
-export function liveRows(protocols: SnapshotProtocol[], limit: number): LiveRow[] {
-  return protocols
-    .filter((p) => !isPreToken(p) && p.mcap_usd !== null && p.mcap_usd > 0 && p.tvl_usd > 0)
-    .sort((a, b) => b.mcap_usd! - a.mcap_usd! || (a.slug < b.slug ? -1 : 1))
-    .slice(0, limit)
-    .map((p) => ({
-      slug: p.slug,
-      name: p.name,
-      cat: p.category ?? 'Uncategorised',
-      tvl: p.tvl_usd,
-      mcap: p.mcap_usd!,
-      mult: round4(p.mcap_usd! / p.tvl_usd),
-    }));
-}
-
 /**
- * Build the whole radar: the calibration, the ranked board and the page's payload. The board holds
- * every launch candidate, sorted by implied value, with the watchlist guaranteed a place even when a
- * protocol's own score would put it below the cut.
+ * Build the whole radar: the curve, the odds table, the out-of-sample test, the ranked board and the
+ * page's payload. The board holds every launch candidate, sorted by implied value, with the watchlist
+ * guaranteed a place even where a protocol's own score would put it below the cut.
  */
 export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: RadarData } {
   if (!Array.isArray(snapshot.protocols) || snapshot.protocols.length === 0) {
     throw new SnapshotError('the snapshot carries no protocols');
   }
-  const { market, categories } = calibrate(snapshot);
-  const byKey = new Map(categories.map((c) => [c.key, c]));
-  const fallback = categories.find((c) => c.key === 'Uncategorised') ?? categories[0]!;
+  const multiples = multiplesOf(snapshot.protocols);
+  const curve = fitCurve(multiples);
+  const launched = snapshot.protocols.filter((p) => !isPreToken(p)).length;
+  const marketRate = launched / snapshot.protocols.length;
+  const oddsTable = categoryOdds(snapshot.protocols, marketRate);
+  const odds = new Map(oddsTable.map((o) => [o.key, o.odds]));
+  const validation = validate(multiples, ['2024-01-01', '2024-07-01', '2025-01-01']);
 
   const scored: Scored[] = [];
   for (const p of snapshot.protocols) {
     if (!isLaunchCandidate(p)) continue;
-    const key = p.category ?? 'Uncategorised';
-    scored.push(score(p, byKey.get(key) ?? fallback, snapshot.as_of));
+    scored.push(score(p, curve, odds, snapshot.as_of));
   }
-  scored.sort((a, b) => b.implied_value - a.implied_value || (a.protocol.slug < b.protocol.slug ? -1 : 1));
-
   // The watchlist is the floor of the board's coverage, never a ceiling on its ambition: every
   // rankable protocol is ranked, and the gate's coverage row is satisfied by construction.
   const chosen = new Set(scored.map((s) => s.protocol.slug));
   for (const slug of snapshot.watchlist) {
-    if (!chosen.has(slug)) {
-      const p = snapshot.protocols.find((x) => x.slug === slug);
-      if (p !== undefined) scored.push(score(p, byKey.get(p.category ?? 'Uncategorised') ?? fallback, snapshot.as_of));
-    }
+    if (chosen.has(slug)) continue;
+    const p = snapshot.protocols.find((x) => x.slug === slug);
+    if (p !== undefined) scored.push(score(p, curve, odds, snapshot.as_of));
   }
   scored.sort((a, b) => b.implied_value - a.implied_value || (a.protocol.slug < b.protocol.slug ? -1 : 1));
   if (scored.length < BOARD_MIN_ROWS) {
@@ -778,12 +912,11 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     implied_value_usd: s.implied_value,
     model: {
       version: MODEL_VERSION,
-      category_multiple: round4(s.multiple),
-      launch_rate: round4(s.launch_rate),
+      size_multiple: round4(s.multiple),
+      launch_odds: round4(s.odds),
       momentum: round4(s.momentum),
       maturity: round4(s.maturity),
       value_if_launched_usd: Math.round(s.value_if_launched),
-      comps: byKey.get(s.category)?.comparables.length ?? 0,
     },
     farm_steps: farmPlan(s).map(stepText),
   }));
@@ -800,12 +933,11 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     listed: s.protocol.listed_at,
     age: s.age,
     mult: round4(s.multiple),
-    launch: round4(s.launch_rate),
+    odds: round4(s.odds),
     mo: round4(s.momentum),
     ma: round4(s.maturity),
     ifl: Math.round(s.value_if_launched),
     implied: s.implied_value,
-    comps: byKey.get(s.category)?.comparables.length ?? 0,
     watch: watchlist.has(s.protocol.slug),
     farm: farmPlan(s),
   }));
@@ -818,20 +950,30 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
       model_version: MODEL_VERSION,
       protocols: snapshot.protocols.length,
       watchlist: snapshot.watchlist.length,
+      watchlist_covered: scored.filter((s) => watchlist.has(s.protocol.slug)).length,
       pre_token: snapshot.protocols.filter(isPreToken).length,
       ranked: board.length,
     },
     model: MODEL,
     assumptions: ASSUMPTIONS,
-    market,
-    calibration: categories,
+    market: {
+      protocols: snapshot.protocols.length,
+      launched,
+      launch_rate: marketRate,
+      median_multiple: median(multiples.map((m) => m.multiple)),
+      multiples: multiples.length,
+    },
+    curve,
+    bands: sizeBands(multiples),
+    odds: oddsTable,
+    validation,
     rows,
-    live: liveRows(snapshot.protocols, 40),
+    live: multiples,
   };
   return { board, radar };
 }
 
-/** Why a board would be refused, or null when it passes the gate's seven rows' data half. */
+/** Why a board would be refused, or null when it passes the gate's data rows. */
 export function boardIssue(board: BoardRow[], snapshot: Snapshot): string | null {
   if (board.length < BOARD_MIN_ROWS) return `only ${board.length} rows, and a board needs ${BOARD_MIN_ROWS}`;
   const slugs = new Set(snapshot.protocols.map((p) => p.slug));

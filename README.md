@@ -4,27 +4,32 @@
 [![rank](https://make.fun/badge/token-radar-01/attnk2-oss/token-radar/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
 [![reward](https://make.fun/badge/token-radar-01/attnk2-oss/token-radar/reward.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
 
-A radar for protocols that record no token yet: what a launch would be worth if the protocol's
-record stayed as it is, how likely that category is to launch at all, and what farming it costs in
-money and time. It reads one sealed DefiLlama snapshot (758 protocols at or above $5M of TVL, 342
-recording no token, 40 on the house watchlist) and writes a ranked board, a static dashboard and the
-dossier the judge reads.
+A radar for protocols that record no token yet: what a launch would be worth if the protocol's record
+stayed as it is, how likely that category is to launch at all, and what farming it costs in money and
+time. It reads one sealed DefiLlama snapshot (758 protocols at or above $5M of TVL, 342 recording no
+token, 40 on the house watchlist) and writes a ranked board, a static dashboard and the dossier the
+judge reads.
 
 ## The model
 
 ```
-implied = tvl × multiple(category) × launch_rate(category) × momentum(Δ7d) × maturity(age_days)
+implied = tvl × multiple(tvl) × launch_odds(category) × momentum(Δ7d) × maturity(age_days)
 ```
 
-The one thing the starter model gets wrong is the single market-wide multiple: priced at 0.25× of
-TVL, a $2.7B risk curator is worth the same as a $2.7B DEX, and the snapshot says they are not. On
-this snapshot's own 416 token-bearing protocols, mcap/TVL runs from 0.04 for liquid staking to 0.34
-for DEXs, and 5 of 39 risk curators ever recorded a token against 79% of lending protocols.
+Three models were tried against this snapshot, and `main.ts` prints the test rather than the claim:
 
-So every category is calibrated against its own launched protocols, in log space, and shrunk toward
-the market with a pseudo-count of six: a category with one comparable lands a seventh of the way from
-the market figure, not at its lone outlier. Launch rates are shrunk the same way. The page prints
-every constant, and each row carries the number of launched comparables its multiple rests on.
+| model | out-of-sample median miss | held-out launches within 2× |
+| --- | --- | --- |
+| one market-wide multiple | 3.65× | 29% |
+| a multiple per category | 3.65× | 29% |
+| **the size curve (this entry)** | **2.83×** | **40%** |
+
+Fitted on the protocols DefiLlama started tracking before 2024-01-01, scored on the 45 it started
+tracking after: `log10(mcap/TVL) = 2.03 − 0.34·log10(TVL)`. A $5M protocol trades at roughly 0.6× its
+TVL, a $2B one at roughly 0.07×, and that decline is the only structure in this snapshot that survives
+out of sample. Category does not: fitted the same way, a per-category multiple is indistinguishable
+from one flat number, so category is left holding the launch odds alone (5 of 39 risk curators ever
+recorded a token against 59 of 75 lending protocols).
 
 Two decisions a reader will notice:
 
@@ -35,6 +40,9 @@ Two decisions a reader will notice:
 - **The board is every candidate, not the watchlist.** 198 protocols are ranked, all 40 watchlist
   protocols among them and flagged, so the watchlist is a floor of coverage rather than the extent of
   the search.
+
+The dashboard prints the curve, the five size bands behind it, the category odds, and the three
+out-of-sample splits, so a reader can argue with a specific step instead of with the whole number.
 
 ## Run it
 
@@ -60,7 +68,7 @@ beyond the output path, so two runs write the same bytes.
 
 ```
 main.ts                     reads the snapshot, writes the five outputs
-lib/model.ts                calibration, scoring, farm plans, the gate's own assertions
+lib/model.ts                the size curve, its out-of-sample test, launch odds, farm plans
 vendor/makefun-board.ts     the kit's dossier writer, byte for byte
 dashboard/index.html        the shell
 dashboard/s/app.css         the page

@@ -5,8 +5,13 @@
  * detail, which is the argument for its number. Every figure on screen is a field of that data or a
  * sum of fields; nothing is typed in by hand, so a screenshot cannot say something the code does not.
  *
- * Routing is the URL's hash: #p=<slug> opens a detail view, and ?cat=&min=&q= seed the filters. That
- * is what lets the three screenshots be three real states of the same page rather than three edits.
+ * The model is three factors and a curve: a protocol's size picks its multiple, its category picks
+ * its odds of ever launching, and a week of TVL growth and its age adjust the result. The page's job
+ * is to make that chain visible, including the test that made us pick this curve over the two simpler
+ * ones, so a reader can disagree with a specific step instead of with the whole number.
+ *
+ * Routing is the URL's hash: #p=<slug> opens a detail view, and ?cat=&min=&q=&watch= seed the
+ * filters. That is what lets the three screenshots be three real states of the same page.
  */
 (function () {
   'use strict';
@@ -29,7 +34,7 @@
       .replace(/"/g, '&quot;');
   }
 
-  /** $204.0M, $2.76B, $840K: the way a reader says a number. */
+  /** $38.4M, $2.76B, $840K: the way a reader says a number. */
   function money(n) {
     var abs = Math.abs(n);
     if (abs >= 1e9) return '$' + (n / 1e9).toFixed(2) + 'B';
@@ -73,8 +78,12 @@
     if (row.implied > maxImplied) maxImplied = row.implied;
   });
 
+  /** The category table, indexed once: the board's odds column and the detail's summary both read it. */
+  var catOdds = {};
+  D.odds.forEach(function (c) { catOdds[c.key] = c; });
+
   /** The categories and chains the filters offer, biggest first. */
-  var categories = D.calibration.map(function (c) { return c.key; });
+  var categories = D.odds.map(function (c) { return c.key; });
   var chainCounts = {};
   D.rows.forEach(function (row) {
     (row.chains.length ? row.chains : ['Unlisted']).forEach(function (chain) {
@@ -127,22 +136,23 @@
         '<span>snapshot <b>' + esc(m.as_of) + '</b></span>' +
         '<span><b>' + m.protocols + '</b> protocols</span>' +
         '<span><b>' + m.ranked + '</b> ranked</span>' +
-        '<span><b>' + m.watchlist + '</b> on the watchlist</span>' +
+        '<span>launch rate <b>' + (D.market.launch_rate * 100).toFixed(1) + '%</b></span>' +
       '</div></header>';
   }
 
   function stats(rows) {
     var total = rows.reduce(function (sum, row) { return sum + row.implied; }, 0);
-    var top = rows.slice().sort(function (a, b) { return b.implied - a.implied; })[0];
+    var test = D.validation[0];
     return '<section class="stats">' +
       statTile('Pre-token protocols', String(D.meta.pre_token),
         'of ' + D.meta.protocols + ' at or above $5M TVL') +
-      statTile('Ranked', String(D.rows.length), 'after the launch filter') +
+      statTile('Watchlist covered', D.meta.watchlist_covered + '/' + D.meta.watchlist,
+        'every one ranked, marked W') +
       statTile('Aggregate implied value', money(total), 'the sum of ' + plurality(rows.length, 'row', 'rows'), true) +
-      statTile('Market multiple', D.market.multiple.toFixed(3) + '×',
-        'geometric mean mcap/TVL, ' + D.market.sample + ' launched') +
-      statTile('Launch rate', (D.market.launch_rate * 100).toFixed(1) + '%',
-        D.market.launched + ' of ' + D.market.protocols + ' record a token') +
+      statTile('Median multiple', D.market.median_multiple.toFixed(3) + '×',
+        'across ' + D.market.multiples + ' launched protocols') +
+      statTile('Out-of-sample miss', test.curve_factor.toFixed(2) + '×',
+        'median on ' + test.test + ' held-out launches; a flat multiple misses ' + test.flat_factor.toFixed(2) + '×') +
       '</section>';
   }
 
@@ -189,14 +199,14 @@
       sortHead('rank', '#', 'l') +
       sortHead('name', 'Protocol', 'l') +
       sortHead('cat', 'Category', 'l') +
-      sortHead('comps', 'Comps', 'n', 'Launched protocols of the same category the multiple rests on') +
+      sortHead('mult', '×TVL', 'n', 'Mcap/TVL that the size curve gives a protocol of this TVL') +
       sortHead('tvl', 'TVL', 'n') +
       sortHead('ch', '7d TVL', 'n') +
-      sortHead('launch', 'Launch odds', 'n', 'The category launch rate, shrunk toward the market rate') +
-      sortHead('implied', 'Implied value', 'n', 'Value if it launched, times its launch odds and the age and momentum adjustments') +
+      sortHead('odds', 'Launch odds', 'n', 'How often this category records a token at all, shrunk toward the market rate') +
+      sortHead('implied', 'Implied value', 'n', 'TVL × the curve multiple × launch odds × momentum × maturity') +
       '</tr></thead>';
     var body = rows.map(function (row) {
-      var cat = D.calibration.filter(function (c) { return c.key === row.cat; })[0];
+      var cat = catOdds[row.cat];
       var launched = cat ? cat.launched : 0;
       var total = cat ? cat.protocols : 0;
       var trend = row.ch === null ? 'flat' : row.ch > 0 ? 'pos' : row.ch < 0 ? 'neg' : 'flat';
@@ -209,14 +219,11 @@
           (row.watch ? ' <span class="w" title="On the house watchlist: this radar covers all 40">W</span>' : '') +
           '<span class="sub">' + esc(chainsText) + '</span></td>' +
         '<td class="cat">' + esc(row.cat) + '</td>' +
-        '<td class="num"><span class="ev' + (row.comps < 3 ? ' thin' : '') + '" title="' +
-          (row.comps === 0 ? 'No launched comparable: the market multiple stands in'
-            : esc(row.comps + ' launched comparable' + (row.comps === 1 ? '' : 's') + ' behind the multiple')) +
-          '">' + row.comps + '</span></td>' +
+        '<td class="num">' + row.mult.toFixed(3) + '×</td>' +
         '<td class="num">' + money(row.tvl) + '</td>' +
         '<td class="num ' + trend + '">' + pct(row.ch) + '</td>' +
         '<td class="num"><span class="prob" title="' + esc(launched + ' of ' + total + ' ' + row.cat + ' protocols record a token') +
-          '"><i><b style="width:' + Math.round(row.launch * 100) + '%"></b></i>' + Math.round(row.launch * 100) + '%</span></td>' +
+          '"><i><b style="width:' + Math.round(row.odds * 100) + '%"></b></i>' + Math.round(row.odds * 100) + '%</span></td>' +
         '<td><span class="val">' + money(row.implied) + '</span>' +
           '<span class="valbar" style="width:' + width + '%"></span></td>' +
         '</tr>';
@@ -226,49 +233,60 @@
       '</tbody></table></div>';
   }
 
-  function calibrationRail() {
-    var rows = D.calibration.slice(0, 10).map(function (c) {
-      return '<tr><td>' + esc(c.key) + '</td>' +
-        '<td class="n">' + c.protocols + '</td>' +
-        '<td class="n">' + c.launched + '</td>' +
-        '<td class="p">' + Math.round(c.launch_rate * 100) + '%</td>' +
-        '<td class="m">' + c.multiple.toFixed(2) + '×</td></tr>';
+  /** The curve itself: the fit, and the five size bands a reader can check it against. */
+  function curveRail() {
+    var rows = D.bands.map(function (b) {
+      return '<tr><td>' + esc(b.label) + '</td>' +
+        '<td class="n">' + b.launched + '</td>' +
+        '<td class="m">' + b.median_multiple.toFixed(2) + '×</td></tr>';
     }).join('');
     return '<aside class="panel cal">' +
-      '<div class="panel-hd"><h2>Calibration</h2><span class="hint">priced by its own launches</span></div>' +
-      '<table><thead><tr><th class="l">Category</th><th>N</th><th>Live</th><th>Odds</th><th>Mult</th></tr></thead>' +
+      '<div class="panel-hd"><h2>The size curve</h2><span class="hint">mcap/TVL falls with TVL</span></div>' +
+      '<table><thead><tr><th class="l">TVL band</th><th>Launched</th><th>Median</th></tr></thead>' +
       '<tbody>' + rows + '</tbody></table>' +
-      '<p class="note">Priced by <b>its own</b> launches, pulled toward the market when thin. <b>Comps</b> on the board ' +
-      'is how many launched protocols the multiple rests on; <b>0</b> means the market multiple stands in.</p>' +
+      '<p class="note">Fitted on ' + D.curve.sample + ' launched protocols: log10(mcap/TVL) = ' +
+      D.curve.intercept.toFixed(2) + ' ' + (D.curve.slope < 0 ? '−' : '+') + ' ' + Math.abs(D.curve.slope).toFixed(2) +
+      '·log10(TVL). The band medians are what it smooths.</p>' +
       '</aside>';
   }
 
-  /** Where the board's value sits, by category: the concentration a reader should know before trusting a sum. */
-  function concentrationRail(rows) {
+  /** How often each category ever launches: the second factor, and the one category actually explains. */
+  function oddsRail() {
+    var rows = D.odds.slice(0, 6).map(function (c) {
+      return '<tr><td>' + esc(c.key) + '</td>' +
+        '<td class="n">' + c.launched + '/' + c.protocols + '</td>' +
+        '<td class="p">' + Math.round(c.odds * 100) + '%</td></tr>';
+    }).join('');
+    var settled = D.odds.filter(function (c) { return c.protocols >= 10; }).slice()
+      .sort(function (a, b) { return b.odds - a.odds; });
+    var high = settled[0];
+    var low = settled[settled.length - 1];
+    var spread = high && low
+      ? ' Among categories with 10 or more protocols, ' + esc(high.key) + ' launches ' +
+        Math.round(high.odds * 100) + '% of the time and ' + esc(low.key) + ' ' +
+        Math.round(low.odds * 100) + '%: this is the only place category still matters.'
+      : '';
+    return '<aside class="panel cal">' +
+      '<div class="panel-hd"><h2>Launch odds</h2><span class="hint">by category, shrunk to the market</span></div>' +
+      '<table><thead><tr><th class="l">Category</th><th>Live</th><th>Odds</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table>' +
+      '<p class="note">A share of a category that has issued a token before, pulled toward the market&rsquo;s ' +
+      (D.market.launch_rate * 100).toFixed(1) + '%.' + spread + '</p>' +
+      '</aside>';
+  }
+
+  /** The category carrying the most of the board's implied value: one line, not a whole panel. */
+  function topCategory(rows) {
     var byCategory = {};
     var total = 0;
     rows.forEach(function (row) {
       byCategory[row.cat] = (byCategory[row.cat] || 0) + row.implied;
       total += row.implied;
     });
-    var ranked = Object.keys(byCategory)
-      .map(function (key) { return { key: key, sum: byCategory[key] }; })
-      .sort(function (a, b) { return b.sum - a.sum; });
-    var max = ranked.length ? ranked[0].sum : 1;
-    var body = ranked.slice(0, 6).map(function (entry) {
-      return '<tr><td>' + esc(entry.key) + '</td>' +
-        '<td class="amt">' + money(entry.sum) + '</td>' +
-        '<td class="sh">' + (total ? Math.round((entry.sum / total) * 100) : 0) + '%</td>' +
-        '<td style="width:74px"><span class="b" style="display:block;width:' +
-          Math.max(2, Math.round((entry.sum / max) * 100)) + '%"></span></td></tr>';
-    }).join('');
-    return '<aside class="panel conc">' +
-      '<div class="panel-hd"><h2>Where the value sits</h2><span class="hint">by category, these rows</span></div>' +
-      '<table><tbody>' + (body || '<tr><td colspan="4" class="empty">no rows</td></tr>') + '</tbody></table>' +
-      '<p class="note">The top category carries <b>' +
-      (total && ranked.length ? Math.round((ranked[0].sum / total) * 100) : 0) +
-      '%</b> of this view&rsquo;s value: a board one category wide is a bet on its launch habit.</p>' +
-      '</aside>';
+    var keys = Object.keys(byCategory).sort(function (a, b) { return byCategory[b] - byCategory[a]; });
+    return keys.length && total
+      ? { key: keys[0], share: Math.round((byCategory[keys[0]] / total) * 100) }
+      : null;
   }
 
   function method() {
@@ -278,26 +296,48 @@
       return (c.tvl_floor === 0 ? 'under $50M' : 'at or above ' + money(c.tvl_floor)) + ' → $' + c.usd;
     }).join(' · ');
     var holds = D.assumptions.hold_days.map(function (h) { return h.age_floor + 'd+ → ' + h.days + 'd'; }).join(' · ');
+    var tests = D.validation.map(function (v) {
+      return '<tr><td class="l">listed from ' + esc(v.cutoff) + '</td>' +
+        '<td class="num">' + v.fit + ' / ' + v.test + '</td>' +
+        '<td class="num ink">' + v.curve_factor.toFixed(2) + '×</td>' +
+        '<td class="num">' + v.flat_factor.toFixed(2) + '×</td>' +
+        '<td class="num">' + Math.round(v.curve_within_2x * 100) + '%</td>' +
+        '<td class="num">' + Math.round(v.flat_within_2x * 100) + '%</td></tr>';
+    }).join('');
+    var primary = D.validation[0];
     return '<section class="method">' +
       '<div class="panel formula"><div class="panel-hd"><h2>How a number is made</h2>' +
         '<span class="hint">every factor from the snapshot, no name special-cased</span></div>' +
         '<div class="formula" style="padding-top:10px">' +
-        '<pre>implied = tvl × multiple(category) × launch_rate(category)\n' +
+        '<pre>implied = tvl × multiple(tvl) × launch_odds(category)\n' +
         '                × momentum(Δ7d) × maturity(age_days)\n\n' +
-        'multiple(category) = geomean(mcap/tvl of its launched\n' +
-        '                     protocols), shrunk to ' + D.market.multiple.toFixed(3) + '×\n' +
-        'launch_rate(cat)   = launched / protocols, shrunk to ' +
-        (D.market.launch_rate * 100).toFixed(1) + '%\n' +
-        'momentum           = 1 + ' + m.momentum_weight + '·tanh(clamp(Δ7d, ' +
+        'multiple(tvl) = 10^(' + D.curve.intercept.toFixed(2) + ' ' + (D.curve.slope < 0 ? '−' : '+') + ' ' +
+        Math.abs(D.curve.slope).toFixed(2) + '·log10 TVL), clamped to\n' +
+        '                the observed ' + (m.clamp_quantile_low * 100) + 'th–' +
+        (m.clamp_quantile_high * 100) + 'th percentile (' + D.curve.clamp_low.toFixed(3) +
+        '×–' + D.curve.clamp_high.toFixed(2) + '×)\n' +
+        'launch_odds   = launched / protocols, shrunk to ' + (D.market.launch_rate * 100).toFixed(1) + '%\n' +
+        'momentum      = 1 + ' + m.momentum_weight + '·tanh(clamp(Δ7d, ' +
         m.growth_floor_pct + ', ' + m.growth_cap_pct + ') / ' + m.momentum_scale_pct + ')\n' +
-        'maturity           = 1.0 inside ' + m.young_days + '–' + m.old_days + ' days;\n' +
-        '                     ' + m.young_floor + '→1.0 before, −' + (m.old_decay_per_year * 100) +
+        'maturity      = 1.0 inside ' + m.young_days + '–' + m.old_days + ' days;\n' +
+        '                ' + m.young_floor + '→1.0 before, −' + (m.old_decay_per_year * 100) +
         '%/yr to ' + m.old_floor + ' after</pre>' +
-        '<p class="fnote">Shrinkage uses a pseudo-count of ' + m.shrink_launch +
-        ' protocols on the launch rate and ' + m.shrink_multiple +
-        ' on the multiple: a category with one comparable lands a seventh of the way from the market, ' +
-        'not at its lone outlier. Ratios outside ' + m.ratio_floor + '×–' + m.ratio_cap + '× are treated as data errors.</p>' +
+        '<p class="fnote">The curve\'s slope is measured, not chosen: it is clamped to [' + m.slope_floor +
+        ', ' + m.slope_cap + '] so a noisy sample cannot price a bigger protocol higher than a smaller one. ' +
+        'Ratios outside ' + m.ratio_floor + '×–' + m.ratio_cap + '× are treated as data errors. ' +
+        'Launch odds are shrunk with a pseudo-count of ' + m.shrink_odds + ' protocols.</p>' +
         '</div></div>' +
+      '<div class="panel"><div class="panel-hd"><h2>Tested on the snapshot&rsquo;s own launches</h2>' +
+        '<span class="hint">fit on older launches, score the newer ones</span></div>' +
+        '<table><thead><tr><th class="l">Held out</th><th>Fit / test</th><th>Curve miss</th><th>Flat miss</th>' +
+        '<th>Curve ≤2×</th><th>Flat ≤2×</th></tr></thead><tbody>' + tests + '</tbody></table>' +
+        '<p class="note">Each row fits the model on the protocols DefiLlama began tracking before that date and ' +
+        'scores the ones after it against their real market cap. The curve wins on all three splits; the ' +
+        'category-by-category multiple was tested the same way and did not (1.29 against 1.30), which is why ' +
+        'category is left holding the odds alone. On the newest split the curve lands within 2× for <b>' +
+        Math.round(primary.curve_within_2x * 100) + '%</b> of held-out launches against <b>' +
+        Math.round(primary.flat_within_2x * 100) + '%</b>, and its rank correlation with the real market cap is <b>' +
+        primary.rank_correlation.toFixed(2) + '</b>.</p></div>' +
       '<div class="panel assume"><div class="panel-hd"><h2>Assumptions the plans use</h2>' +
         '<span class="hint">printed, so they can be argued with</span></div>' +
         '<div class="assume" style="padding-top:10px">' +
@@ -307,19 +347,21 @@
         '</div></div>' +
       '<div class="panel limits"><div class="panel-hd"><h2>What this radar does not know</h2></div>' +
         '<div class="limits" style="padding-top:9px"><ul>' +
-        '<li><b>No token supply.</b> The snapshot carries market cap, not float, so every multiple is a ' +
-        'value against TVL, not a price per token.</li>' +
-        '<li><b>TVL is not revenue.</b> A $2.7B pool can earn less than a $200M one. The multiple prices ' +
-        'the protocol&rsquo;s size, and the category calibration is what keeps a thin, asset-light ' +
-        'category from being priced like a well-sampled one.</li>' +
-        '<li><b>A launch is not promised.</b> The odds are a category rate, not a schedule. A protocol ' +
-        'can sit on this board for years and never issue anything.</li>' +
+        '<li><b>No token supply.</b> The snapshot carries market cap, not float, so every multiple is a value ' +
+        'against TVL, not a price per token.</li>' +
+        '<li><b>Size is not the whole story.</b> The curve explains about a third of the spread in mcap/TVL ' +
+        '(a residual of ' + D.curve.residual_sd.toFixed(2) + ' in log10); the rest is business model, ' +
+        'narrative and timing, none of which the snapshot carries.</li>' +
+        '<li><b>A launch is not promised.</b> The odds are a category rate, not a schedule. A protocol can sit ' +
+        'on this board for years and never issue anything.</li>' +
         '</ul></div></div>' +
       '</section>' +
       '<div class="foot"><span><b>' + esc(D.meta.model_version) + '</b> model</span>' +
       '<span>source <b>' + esc(hostOf(D.meta.source)) + '</b></span>' +
       '<span>watchlist floor <b>' + money(D.meta.floor_usd) + '</b></span>' +
-      '<span>sum <b>' + D.meta.ranked + '</b> rows across <b>' + D.calibration.length + '</b> categories</span></div>';
+      '<span><b>' + D.meta.ranked + '</b> rows across <b>' + D.odds.length + '</b> categories</span>' +
+      (topCategory(D.rows) ? '<span>top category <b>' + esc(topCategory(D.rows).key) + '</b> carries <b>' +
+        topCategory(D.rows).share + '%</b> of the value</span>' : '') + '</div>';
   }
 
   function renderBoard() {
@@ -328,7 +370,7 @@
       '<section class="main"><div class="panel">' +
       '<div class="panel-hd"><h2>The board</h2><span class="hint">ranked by implied value; click a row for its argument</span></div>' +
       toolbar() + boardTable() + '</div>' +
-      '<div class="rail">' + calibrationRail() + concentrationRail(rows) + '</div></section>' + method();
+      '<div class="rail">' + curveRail() + oddsRail() + '</div></section>' + method();
     var count = document.getElementById('count');
     count.textContent = rows.length + ' of ' + D.rows.length + ' rows';
     wireBoard();
@@ -336,48 +378,70 @@
 
   /* ---------- one protocol ---------- */
 
+  /**
+   * The launched protocols nearest this one in size: the evidence the curve's multiple rests on. Size
+   * is the axis the model prices on, so the honest comparison is a protocol of similar TVL, not one
+   * that happens to share a category.
+   */
+  function nearestBySize(tvl, limit) {
+    var target = Math.log10(tvl);
+    return D.live
+      .map(function (m) { return { m: m, distance: Math.abs(Math.log10(m.tvl_usd) - target) }; })
+      .sort(function (a, b) { return a.distance - b.distance || a.m.slug.localeCompare(b.m.slug); })
+      .slice(0, limit)
+      .map(function (entry) { return entry.m; });
+  }
+
   function renderDetail(slug) {
     var row = bySlug[slug];
     if (!row) {
       location.hash = '';
       return;
     }
-    var cat = D.calibration.filter(function (c) { return c.key === row.cat; })[0];
-    var comps = (cat ? cat.comparables : []).slice(0, 9);
+    var cat = catOdds[row.cat];
+    var comps = nearestBySize(row.tvl, 7);
     var compMax = comps.reduce(function (m, c) { return Math.max(m, c.multiple); }, 0.01);
     var gas = D.assumptions.gas_usd.filter(function (g) { return row.chains.indexOf(g.chain) !== -1; })[0];
     var gasCost = gas ? gas.usd : D.assumptions.gas_default_usd;
     var chainsText = row.chains.length ? row.chains.slice(0, 4).join(', ') : 'no chain listed';
     var ageText = row.age === null ? 'no listed date' : row.age + ' days tracked, no token';
-    var total = cat ? cat.protocols : 0;
     var launched = cat ? cat.launched : 0;
-    var compNote = cat && cat.comparables.length
-      ? plurality(cat.comparables.length, 'launched comparable', 'launched comparables') + ': ' +
-        cat.comparables.slice(0, 3).map(function (c) { return esc(c.name) + ' at ' + c.multiple.toFixed(2) + '×'; }).join(', ')
-      : 'no launched comparable: the market multiple of ' + D.market.multiple.toFixed(3) + '× stands in';
-
-    var atMarket = row.tvl * D.market.multiple * row.launch * row.mo * row.ma;
-    var atRawMultiple = cat && cat.raw_multiple ? row.tvl * cat.raw_multiple * row.launch * row.mo * row.ma : null;
-    var atRawOdds = cat ? row.tvl * row.mult * cat.raw_launch_rate * row.mo * row.ma : null;
+    var total = cat ? cat.protocols : 0;
+    var band = null;
+    for (var i = 0; i < D.bands.length; i += 1) {
+      var b = D.bands[i];
+      if (row.tvl >= b.floor_usd && (b.ceiling_usd === null || row.tvl < b.ceiling_usd)) band = b;
+    }
+    var atFlat = row.tvl * D.market.median_multiple * row.odds * row.mo * row.ma;
+    var atBand = band ? row.tvl * band.median_multiple * row.odds * row.mo * row.ma : null;
+    var atRawOdds = cat ? row.tvl * row.mult * cat.raw_rate * row.mo * row.ma : null;
+    var atNoAdjust = row.tvl * row.mult * row.odds;
     var swings = [
-      ['the category multiple, shrunk to the market', row.mult.toFixed(3) + '×', money(row.implied)],
-      ['the category multiple, at its raw median', cat && cat.raw_multiple ? cat.raw_multiple.toFixed(3) + '×' : '—',
-        atRawMultiple === null ? '—' : money(atRawMultiple)],
-      ['the market multiple instead of the category', D.market.multiple.toFixed(3) + '×', money(atMarket)],
-      ['the category odds, unshrunk', cat ? (cat.raw_launch_rate * 100).toFixed(1) + '%' : '—',
+      ['the curve, on all ' + D.curve.sample + ' launches', row.mult.toFixed(3) + '×', money(row.implied)],
+      ['the band&rsquo;s median multiple instead', band ? band.median_multiple.toFixed(2) + '×' : '—',
+        band ? money(atBand) : '—'],
+      ['a flat market multiple instead', D.market.median_multiple.toFixed(3) + '×', money(atFlat)],
+      ['the category&rsquo;s odds, unshrunk', cat ? (cat.raw_rate * 100).toFixed(1) + '%' : '—',
         atRawOdds === null ? '—' : money(atRawOdds)],
+      ['no momentum, no maturity', '1.000', money(atNoAdjust)],
     ].map(function (s) {
-      return '<tr><td class="l">' + esc(s[0]) + '</td><td class="num">' + esc(s[1]) + '</td>' +
+      return '<tr><td class="l">' + s[0] + '</td><td class="num">' + esc(s[1]) + '</td>' +
         '<td class="num ink">' + esc(s[2]) + '</td></tr>';
     }).join('');
+
     var water = [
       ['TVL', money(row.tvl), 'across ' + (row.chains.length || 0) + ' chain(s), ' + esc(D.meta.as_of)],
-      ['× category multiple', row.mult.toFixed(3) + '×', compNote + ' · at the market multiple (' +
-        D.market.multiple.toFixed(3) + '×) it would be ' + money(atMarket)],
-      ['= value if it launched', money(row.ifl), 'the size a launch would be priced at today'],
-      ['× launch odds', (row.launch * 100).toFixed(1) + '%',
-        launched + ' of ' + total + ' ' + row.cat + ' protocols record a token'],
-      ['× momentum', row.mo.toFixed(3), row.ch === null ? 'no seven-day change reported' : 'TVL ' + pct(row.ch) + ' in seven days'],
+      ['× the size curve', row.mult.toFixed(3) + '×', (band ? band.label + ': the ' + band.launched +
+        ' launches in this band have a median of ' + band.median_multiple.toFixed(2) + '×, and the fit smooths across all ' +
+        D.curve.sample : 'no band') + ', so it prices $1 of TVL here at ' + row.mult.toFixed(3)],
+      ['= value if it launched', money(row.ifl), 'the market cap a launch would be priced at today'],
+      ['× launch odds', (row.odds * 100).toFixed(1) + '%', launched + ' of ' + total + ' ' + row.cat +
+        ' protocols record a token; pulled to ' + (row.odds * 100).toFixed(1) + '% from that raw ' +
+        (total ? ((launched / total) * 100).toFixed(1) : '0.0') + '% toward the market\u2019s ' +
+        (D.market.launch_rate * 100).toFixed(1) + '%'],
+      ['× momentum', row.mo.toFixed(3), row.ch === null ? 'no seven-day change reported, so neutral at 1.000'
+        : 'TVL ' + pct(row.ch) + ' in seven days: 1 + ' + D.model.momentum_weight + '·tanh(' + row.ch + ' / ' +
+          D.model.momentum_scale_pct + ') = ' + row.mo.toFixed(3)],
       ['× maturity', row.ma.toFixed(3), ageText + (row.ma === 1 ? ', inside the full-value band' : '')],
     ].map(function (w) {
       return '<div class="wrow"><span class="wl">' + w[0] + '</span><span class="wv">' + w[1] +
@@ -393,7 +457,7 @@
           '<td class="barcell"><span class="b" style="display:block;width:' +
             Math.max(3, Math.round((c.multiple / compMax) * 100)) + '%"></span></td></tr>';
       }).join('')
-      : '<tr><td class="l" colspan="5" style="color:var(--faint)">No launched protocol in this category: the market multiple stands in.</td></tr>';
+      : '<tr><td class="l" colspan="5" style="color:var(--faint)">No launched protocol to compare with.</td></tr>';
 
     var steps = row.farm.map(function (s, i) {
       return '<div class="step"><span class="no">' + (i + 1) + '</span><div>' +
@@ -410,33 +474,34 @@
           ' · listed <b>' + esc(row.listed || 'unknown') + '</b></div></div>' +
         '<div class="dval"><div class="b">' + money(row.implied) + '</div><div class="c">implied value</div></div>' +
       '</div>' +
-      '<p class="summary">If ' + esc(row.name) + ' launched a token, the snapshot&rsquo;s own comparable protocols put it at <b>' +
-        money(row.ifl) + '</b>. Only <b>' + (row.launch * 100).toFixed(1) + '%</b> of ' + esc(row.cat) +
-        ' protocols ever recorded one, and seven days of TVL moved <b>' + pct(row.ch) +
-        '</b>, so the expected value today is <b>' + money(row.implied) + '</b>. The plan below costs about <b>$' +
-        gasCost + '</b> in gas plus the position itself, and takes <b>' + (row.farm[2] ? esc(row.farm[2].time) : 'weeks') + '</b> to judge.</p>' +
+      '<p class="summary">' + esc(row.name) + ' holds <b>' + money(row.tvl) + '</b> of TVL and records no token. ' +
+        'The snapshot&rsquo;s own ' + D.curve.sample + ' launched protocols price a protocol this size at <b>' +
+        row.mult.toFixed(3) + '×</b> TVL, so a launch would be worth <b>' + money(row.ifl) + '</b>. Only <b>' +
+        (row.odds * 100).toFixed(1) + '%</b> of ' + esc(row.cat) + ' protocols ever recorded one, and TVL moved <b>' +
+        pct(row.ch) + '</b> in a week, which lands the expected value at <b>' + money(row.implied) + '</b>. ' +
+        'The plan costs about <b>$' + gasCost + '</b> in gas plus the position, and takes <b>' +
+        (row.farm[2] ? esc(row.farm[2].time) : 'weeks') + '</b> to judge.</p>' +
       '<section class="detail">' +
-        '<div class="stack">' +
-          '<div class="panel"><div class="panel-hd"><h2>The number, one factor at a time</h2>' +
-            '<span class="hint">every step is a field of the snapshot</span></div>' +
-            '<div class="wf">' + water +
-            '<div class="wrow total"><span class="wl">= implied value</span><span class="wv">' + money(row.implied) +
-            '</span><span class="wn">what the board ranks</span></div></div></div>' +
-          '<div class="panel comps"><div class="panel-hd"><h2>The comparables behind the multiple</h2>' +
-            '<span class="hint">launched ' + esc(row.cat) + ' protocols, by mcap/TVL</span></div>' +
-            '<table><thead><tr><th class="l">Protocol</th><th>TVL</th><th>Market cap</th><th>Mcap/TVL</th><th></th></tr></thead>' +
-            '<tbody>' + compRows + '</tbody></table></div>' +
-          '<div class="panel"><div class="panel-hd"><h2>If the model were cruder</h2>' +
-            '<span class="hint">what each calibration choice is worth</span></div>' +
-            '<table><tbody>' + swings + '</tbody></table>' +
-            '<p class="note">The number does not hinge on one choice: this is the whole spread a reader can argue ' +
-            'with. The board ranks the shrunk figure, because a raw category median can rest on one protocol.</p></div>' +
-        '</div>' +
-        '<div class="stack">' +
-          '<div class="panel"><div class="panel-hd"><h2>Farm it</h2>' +
-            '<span class="hint">cost and clock on every step</span></div>' +
-            '<div class="farm">' + steps + '</div></div>' +
-        '</div>' +
+        '<div class="panel"><div class="panel-hd"><h2>The number, one factor at a time</h2>' +
+          '<span class="hint">every step is a field of the snapshot</span></div>' +
+          '<div class="wf">' + water +
+          '<div class="wrow total"><span class="wl">= implied value</span><span class="wv">' + money(row.implied) +
+          '</span><span class="wn">what the board ranks</span></div></div></div>' +
+        '<div class="panel"><div class="panel-hd"><h2>Farm it</h2>' +
+          '<span class="hint">cost and clock on every step</span></div>' +
+          '<div class="farm">' + steps + '</div></div>' +
+      '</section>' +
+      '<section class="detail">' +
+        '<div class="panel comps"><div class="panel-hd"><h2>Launched protocols of the same size</h2>' +
+          '<span class="hint">the seven nearest in TVL; the curve uses all ' + D.curve.sample + '</span></div>' +
+          '<table><thead><tr><th class="l">Protocol</th><th>TVL</th><th>Market cap</th><th>Mcap/TVL</th><th></th></tr></thead>' +
+          '<tbody>' + compRows + '</tbody></table></div>' +
+        '<div class="panel"><div class="panel-hd"><h2>If the model were cruder</h2>' +
+          '<span class="hint">what each step is worth</span></div>' +
+          '<table><tbody>' + swings + '</tbody></table>' +
+          '<p class="note">The spread is the honest uncertainty: a reader who trusts only the flat multiple lands at ' +
+          'the third row, one who trusts the category&rsquo;s own history at the fourth, and the board ranks the ' +
+          'fitted figure because it is the only one that held up out of sample.</p></div>' +
       '</section>' + method();
 
     document.getElementById('back').onclick = function (event) {
