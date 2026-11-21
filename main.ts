@@ -20,7 +20,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { boardIssue, buildRadar, dataScript, parseSnapshot } from './lib/model.ts';
+import { boardIssue, buildRadar, dataScript, isPreToken, parseSnapshot, setAsideReason } from './lib/model.ts';
 import { buildDossier } from './vendor/makefun-board.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
@@ -54,6 +54,40 @@ if (issue !== null) {
   process.stderr.write(`token radar: the model wrote a board the gate refuses: ${issue}\n`);
   process.exit(1);
 }
+
+// Coverage is read from the snapshot, never from a literal: every pre-token protocol either ranks or
+// names the watchlist rule that sets it aside. A pre-token protocol with no reason would be a bug in
+// the board, so the build refuses it rather than shipping an unexplained absence.
+const rankedSlugs = new Set(board.map((row) => row.slug));
+const setAside = snapshot.protocols
+  .filter((p) => isPreToken(p) && !rankedSlugs.has(p.slug))
+  .map((p) => {
+    const reason = setAsideReason(p);
+    if (reason === null) {
+      process.stderr.write(`token radar: ${p.slug} records no token, is not ranked, and matches no set-aside rule\n`);
+      process.exit(1);
+    }
+    return { slug: p.slug, name: p.name, reason };
+  })
+  .sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
+const coverage = {
+  total: snapshot.protocols.length,
+  ranked: board.length,
+  trading: snapshot.protocols.filter((p) => p.gecko_id !== null || p.symbol !== null).length,
+  setAside,
+};
+if (coverage.ranked + coverage.trading + coverage.setAside.length !== coverage.total) {
+  process.stderr.write(
+    `token radar: coverage does not add up: ${coverage.ranked} ranked + ${coverage.trading} trading + ` +
+      `${coverage.setAside.length} set aside ≠ ${coverage.total} in the snapshot\n`,
+  );
+  process.exit(1);
+}
+process.stdout.write(
+  `token radar: coverage ${coverage.total} = ${coverage.ranked} ranked + ${coverage.trading} trading + ` +
+    `${coverage.setAside.length} set aside\n`,
+);
+radar.coverage = coverage;
 
 /**
  * Copy a directory tree into the output, skipping dot names the way the gate reads a dashboard.
@@ -109,7 +143,7 @@ for (const row of board) {
 }
 const top = board[0]!;
 const winner = radar.ladder.find((row) => row.chosen)!;
-const flat = radar.ladder.find((row) => row.key === 'flat')!;
+const flat = radar.ladder.find((row) => row.name === 'TVL × one multiple')!;
 const verdicts = new Map<string, number>();
 for (const row of board) verdicts.set(row.decision.verdict, (verdicts.get(row.decision.verdict) ?? 0) + 1);
 const verdictLine = ['Worth farming', 'Marginal', 'Skip']
@@ -118,12 +152,12 @@ const verdictLine = ['Worth farming', 'Marginal', 'Skip']
 process.stdout.write(
   `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ` +
     `${radar.meta.pre_token} pre-token, ${board.length} ranked across ${byCategory.size} categories\n` +
-    `token radar: model ${radar.meta.model_version} (${winner.label}), log10(mult) = ` +
+    `token radar: model ${radar.meta.model_version} (${winner.name}), log10(mult) = ` +
     `${radar.curve.intercept.toFixed(3)} ${radar.curve.slope.toFixed(3)}*log10(tvl) ` +
     `${radar.curve.growth.toFixed(3)}*growth on ${radar.curve.sample} launches, residual ${radar.curve.residual_sd.toFixed(2)}\n` +
-    `token radar: ladder walk-forward ${radar.ladder.map((row) => `${row.key} ${row.walk_forward.toFixed(2)}x`).join(', ')}\n` +
-    `token radar: out-of-sample miss ${winner.walk_forward.toFixed(2)}x against ${flat.walk_forward.toFixed(2)}x for one multiple, ` +
-    `${Math.round(winner.within_3x * 100)}% within 3x, rank ${winner.rank_correlation.toFixed(2)}\n` +
+    `token radar: ladder walk-forward ${radar.ladder.map((row) => `${row.name} ${row.walkForward.toFixed(2)}x`).join(', ')}\n` +
+    `token radar: out-of-sample miss ${winner.walkForward.toFixed(2)}x against ${flat.walkForward.toFixed(2)}x for one multiple, ` +
+    `${Math.round(winner.withinThree * 100)}% within 3x, rank ${winner.rho.toFixed(2)}\n` +
     `token radar: rank 1 ${top.name} at $${(top.implied_value_usd / 1e6).toFixed(1)}M implied ` +
     `(value if launched $${(top.model.value_if_launched_usd / 1e6).toFixed(0)}M x ${top.model.launch_odds} odds, ` +
     `${top.decision.verdict.toLowerCase()} at $${top.decision.stake})\n` +

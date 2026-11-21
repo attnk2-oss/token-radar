@@ -335,6 +335,31 @@ export interface ScatterPoint {
   kind: number;
 }
 
+/** One rung as data.js carries it: the four tests, and whether the board prices on it. */
+export interface LadderRow {
+  name: string;
+  loo: number;
+  withinThree: number;
+  rho: number;
+  walkForward: number;
+  chosen: boolean;
+}
+
+/** One pre-token protocol kept off the board, and the rule that kept it there. */
+export interface SetAside {
+  slug: string;
+  name: string;
+  reason: string;
+}
+
+/** The snapshot's 758 protocols, all accounted for. */
+export interface Coverage {
+  total: number;
+  ranked: number;
+  trading: number;
+  setAside: SetAside[];
+}
+
 /** Everything the page needs: the board, the ladder behind it, the band and the decision. */
 export interface RadarData {
   meta: {
@@ -364,8 +389,9 @@ export interface RadarData {
   };
   bands: SizeBand[];
   odds: CategoryOdds[];
-  ladder: LadderScore[];
+  ladder: LadderRow[];
   splits: ValidationSplit[];
+  coverage?: Coverage;
   /** The residual quantiles the row bands are drawn from, at the sample's own TVL. */
   residual: { p10: number; p25: number; p75: number; p90: number };
   /** The P25-P75 band as a path: the model's multiple and its interquartile range at each of 21 TVLs. */
@@ -484,15 +510,23 @@ const EXCHANGE_PREFIX = [
 ];
 
 /**
+ * The watchlist's structural rule, as one reason or null: a protocol set aside because it is a venue
+ * or a derivative of a token that already trades is never a launch candidate. This is the single
+ * implementation both the board and the coverage accounting read, so the two cannot drift.
+ */
+export function setAsideReason(p: SnapshotProtocol): string | null {
+  if (p.category !== null && NOT_A_LAUNCH.has(p.category)) return `${p.category} category`;
+  if (VERSIONED.test(p.name)) return 'versioned name';
+  if (DERIVATIVE_NAME.test(p.name)) return 'wrapped / staked wording';
+  return EXCHANGE_PREFIX.some((prefix) => p.name.startsWith(prefix)) ? 'exchange product name' : null;
+}
+
+/**
  * Whether a protocol is a launch candidate at all: the watchlist's structural rule from
  * input/README.md, applied to the whole field rather than to the protocols above its $50M floor.
  */
 export function isLaunchCandidate(p: SnapshotProtocol): boolean {
-  if (!isPreToken(p)) return false;
-  if (p.category !== null && NOT_A_LAUNCH.has(p.category)) return false;
-  if (VERSIONED.test(p.name)) return false;
-  if (DERIVATIVE_NAME.test(p.name)) return false;
-  return !EXCHANGE_PREFIX.some((prefix) => p.name.startsWith(prefix));
+  return isPreToken(p) && setAsideReason(p) === null;
 }
 
 /** A whole day count from listed_at to the snapshot's date; null when either date is absent or bad. */
@@ -1370,7 +1404,14 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     },
     bands: sizeBands(multiples),
     odds: oddsTable,
-    ladder,
+    ladder: ladder.map((row) => ({
+      name: row.label,
+      loo: round(row.loo_miss, 2),
+      withinThree: round(row.within_3x, 3),
+      rho: round(row.rank_correlation, 2),
+      walkForward: round(row.walk_forward, 2),
+      chosen: row.chosen,
+    })),
     splits: ladder.find((row) => row.chosen)!.splits,
     residual: {
       p10: round(globalBand.p10, 3),
