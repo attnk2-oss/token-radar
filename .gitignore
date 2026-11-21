@@ -6,3 +6,6 @@ node_modules/
 *.keypair.json
 wallet*.json
 .env
+BRIEF-v5.md
+PLAN-v5.md
+DIG-*.md
