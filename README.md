@@ -121,10 +121,10 @@ beyond the output path, so two runs write the same bytes.
 
 | file | why |
 | --- | --- |
-| `board.json` | the ranked board: 198 rows, ranks 1..N, implied value non-increasing, each with its decision at $1,000 |
+| `board.json` | the ranked board: 198 rows, ranks 1..N, implied value non-increasing, each with its decision and 3–12 farm steps at $1,000 |
 | `data.js` | the same numbers plus the ladder, the band path and all four decisions, for the page; outside `dashboard/` so the judge's 65,536-byte source window is spent on code |
-| `dashboard/` | `index.html` plus the CSS and JS it loads, 64,210 bytes in all, no framework, no network |
-| `screenshots/` | four views: the board, a protocol's detail, a filtered board at $10,000, and the model |
+| `dashboard/` | `index.html` plus the CSS and JS it loads, 53,722 bytes in all, no framework, no network |
+| `screenshots/` | three views: the board with row 1's farm steps expanded, a protocol's detail, and a filtered board (watchlist) |
 | `dossier.json` | what the judge reads, written by the vendored `buildDossier` the scorer runs itself |
 
 ## Verify it
@@ -156,8 +156,8 @@ lib/model.ts                the six-variant ladder, the fitted model, the band, 
 vendor/makefun-board.ts     the kit's dossier writer, byte for byte
 dashboard/index.html        the shell
 dashboard/s/app.css         the page
-dashboard/s/app.js          the board, the decision switch, the ladder, the scatter, the detail
-screenshots/                four views of the page, as it renders
+dashboard/s/app.js          the board with per-row farm steps, decision switch, ladder, scatter, detail
+screenshots/                three views of the page, as it renders
 ```
 
 ## Licence

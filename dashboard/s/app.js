@@ -22,7 +22,8 @@
     view: 'board',
     sortKey: 'rank',
     sortDir: 1,
-    selected: null
+    selected: null,
+    expanded: rows.length ? rows[0].slug : null
   };
 
   function esc(text) {
@@ -92,6 +93,35 @@
     if (Array.isArray(row.dec)) return row.dec;
     if (row.dec && typeof row.dec === 'object') return [row.dec];
     return [];
+  }
+
+  /* board.json ships farm_steps as strings; data.js ships farm as
+     {text,cost,time} objects. The page reads whichever field the row carries. */
+  function farmSteps(row) {
+    const src = Array.isArray(row.farm_steps) ? row.farm_steps
+      : Array.isArray(row.farm) ? row.farm : [];
+    return src.map(function (s) {
+      if (typeof s === 'string') {
+        const m = s.match(/Cost:\s*(.*?)\.\s*Time:\s*(.*?)[\s.]*$/i);
+        return { text: s, cost: m ? m[1] : '', time: m ? m[2] : '' };
+      }
+      return { text: s.text || '', cost: s.cost || '', time: s.time || '' };
+    }).filter(function (s) { return s.text; });
+  }
+
+  /* Compact in-row summary, all of it computed from this row's own plan and
+     the decision at the selected stake: no literal plan or price is stored. */
+  function farmSummary(row) {
+    const steps = farmSteps(row);
+    const d = currentDecision(row).d;
+    const bits = [steps.length + (steps.length === 1 ? ' step' : ' steps')];
+    const days = Number(row.hold);
+    if (Number.isFinite(days) && days > 0) bits.push(days + 'd');
+    const gas = Number(row.gas);
+    if (Number.isFinite(gas)) bits.push((gas >= 1 ? money(gas) : '$' + gas.toFixed(2)) + ' gas');
+    const cost = Number(d.cost_usd);
+    if (Number.isFinite(cost)) bits.push(money(cost) + ' cost');
+    return bits.join(' · ');
   }
 
   /* The row ships one decision per tier. If a board ever carries only the
@@ -392,6 +422,7 @@
     let html = '<table class="board" aria-label="Ranked protocols"><thead><tr>' +
       sortHeader('rank', '#', 'num') +
       sortHeader('name', 'Protocol') +
+      '<th>Farm plan</th>' +
       sortHeader('implied', 'Implied value', 'num') +
       '<th>Band</th>' +
       sortHeader('tvl', 'TVL', 'num') +
@@ -406,11 +437,15 @@
     list.forEach(function (row) {
       const got = currentDecision(row);
       const d = got.d;
+      const steps = farmSteps(row);
+      const expanded = state.expanded === row.slug;
       const chains = (row.chains || []).slice(0, 3).join(' · ') + ((row.chains || []).length > 3 ? ' +' + ((row.chains || []).length - 3) : '');
-      html += '<tr tabindex="0" data-slug="' + esc(row.slug) + '" aria-label="Open ' + esc(row.name) + '">' +
+      html += '<tr tabindex="0" class="row-main' + (expanded ? ' expanded' : '') + '" data-slug="' + esc(row.slug) + '" aria-expanded="' + expanded + '" aria-label="Farm steps for ' + esc(row.name) + '">' +
         '<td class="rank num">' + esc(row.rank) + '</td>' +
-        '<td class="protocol"><span class="pname">' + esc(row.name) + '</span>' + badges(row) +
+        '<td class="protocol"><span class="pname">' + esc(row.name) + (expanded ? '<span class="caret">▾</span>' : '<span class="caret">▸</span>') + '</span>' + badges(row) +
           '<span class="meta">' + esc(row.cat || 'Uncategorised') + ' · family ' + (row.fam > 0 ? '+' : '') + esc(num(row.fam, 3)) + ' · ' + esc(chains || 'no chain listed') + '</span></td>' +
+        '<td class="farm-cell"><span class="farm-sum">' + esc(farmSummary(row)) + '</span>' +
+          '<button type="button" class="dlink" data-detail="' + esc(row.slug) + '">details ↗</button></td>' +
         '<td class="num"><span class="value">' + money(row.implied) + '</span><span class="sub">' + esc(bandText(row.band)) + '</span></td>' +
         '<td class="whisker">' + bandTrack(row) + '<span class="sub">P10–P90</span></td>' +
         '<td class="num nowrap">' + money(row.tvl) + '</td>' +
@@ -422,6 +457,13 @@
         '<td class="num nowrap ' + signClass(d.net_per_hour) + '">' + signedMoney(d.net_per_hour) + '/h</td>' +
         '<td><span class="badge ' + verdictClass(d.verdict) + '">' + esc(d.verdict) + '</span></td>' +
         '</tr>';
+      if (expanded) {
+        html += '<tr class="farm-row"><td colspan="13"><div class="farm-panel">' +
+          '<div class="farm-head"><b>' + esc(row.name) + '</b><span>' + esc(steps.length) + ' steps · ' + esc(row.hold) + 'd hold · ' + money(d.cost_usd) + ' all-in at ' + shortMoney(d.stake) + '</span></div>' +
+          '<ol class="farm farm-inline">' + steps.map(function (s) {
+            return '<li><p>' + esc(s.text) + '</p><small>' + esc(s.cost) + ' · ' + esc(s.time) + '</small></li>';
+          }).join('') + '</ol></div></td></tr>';
+      }
     });
     return html + '</tbody></table>';
   }
@@ -431,12 +473,25 @@
     if (!wrap) return;
     wrap.innerHTML = boardHTML();
     wrap.querySelectorAll('tr[data-slug]').forEach(function (tr) {
-      tr.addEventListener('click', function () { openDetail(tr.getAttribute('data-slug')); });
+      tr.addEventListener('click', function (event) {
+        if (event.target.closest('[data-detail]')) return;
+        const slug = tr.getAttribute('data-slug');
+        state.expanded = state.expanded === slug ? null : slug;
+        renderBoard();
+      });
       tr.addEventListener('keydown', function (event) {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
-          openDetail(tr.getAttribute('data-slug'));
+          const slug = tr.getAttribute('data-slug');
+          state.expanded = state.expanded === slug ? null : slug;
+          renderBoard();
         }
+      });
+    });
+    wrap.querySelectorAll('[data-detail]').forEach(function (button) {
+      button.addEventListener('click', function (event) {
+        event.stopPropagation();
+        openDetail(button.getAttribute('data-detail'));
       });
     });
     wrap.querySelectorAll('th[data-sort]').forEach(function (th) {
@@ -527,7 +582,7 @@
           '<div class="bandlabels"><span>P10 ' + shortMoney(row.band[0]) + '</span><span>P25 ' + shortMoney(row.band[1]) + '</span><span>P75 ' + shortMoney(row.band[2]) + '</span><span>P90 ' + shortMoney(row.band[3]) + '</span></div></div>' +
         '<p class="note">The dot is the implied value. The band is the model’s leave-one-out spread at this TVL, not a confidence interval on a different model.</p>' +
         '<h3>Farm steps</h3><ol class="farm">' +
-          (row.farm || []).map(function (step) {
+          farmSteps(row).map(function (step) {
             return '<li><p>' + esc(step.text) + '</p><small>' + esc(step.cost) + ' · ' + esc(step.time) + '</small></li>';
           }).join('') + '</ol>' +
         '<h3>Decision at every stake</h3><div class="detail-scroll"><table class="decisions">' +
